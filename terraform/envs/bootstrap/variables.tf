@@ -19,3 +19,9 @@ variable "common_tags" {
   description = "공통 태그 목록"
   default     = {}
 }
+
+variable "ecr_repository_names" {
+  type        = list(string)
+  description = "생성할 ECR 리포지토리 이름 목록"
+  default     = ["fundit-backend", "fundit-frontend"]
+}
