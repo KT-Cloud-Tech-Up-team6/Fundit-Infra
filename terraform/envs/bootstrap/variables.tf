@@ -1,0 +1,27 @@
+variable "aws_region" {
+  type        = string
+  description = "배포할 AWS 리전"
+  default     = "ap-northeast-2"
+}
+
+variable "aws_profile" {
+  type        = string
+  description = "사용할 AWS CLI 프로필 이름"
+}
+
+variable "state_bucket_name" {
+  type        = string
+  description = "Terraform State를 저장할 S3 버킷 이름"
+}
+
+variable "common_tags" {
+  type        = map(string)
+  description = "공통 태그 목록"
+  default     = {}
+}
+
+variable "ecr_repository_names" {
+  type        = list(string)
+  description = "생성할 ECR 리포지토리 이름 목록"
+  default     = ["fundit-backend", "fundit-frontend"]
+}
