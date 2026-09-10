@@ -1,5 +1,6 @@
 project_name = "fundit"
 environment  = "dev"
+domain_name  = "infrastudy.store"
 common_tags = {
   Project   = "Fundit"
   Team      = "Team6"
