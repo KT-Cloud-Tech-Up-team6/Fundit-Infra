@@ -7,6 +7,7 @@ variable "aws_region" {
 variable "aws_profile" {
   type        = string
   description = "사용할 AWS CLI 프로필 이름"
+  default     = "team6-infra"
 }
 
 variable "state_bucket_name" {
