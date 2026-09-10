@@ -1,7 +1,7 @@
 variable "project_name" {
   description = "프로젝트 이름"
-  type = string
-  default = "fundit"
+  type        = string
+  default     = "fundit"
 }
 
 variable "environment" {

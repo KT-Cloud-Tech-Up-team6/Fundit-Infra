@@ -16,7 +16,7 @@ variable "vpc_id" {
 variable "ssh_allowed_cidrs" {
   description = "SSH 접속을 허용할 IP 대역"
   type        = list(string)
-  default     = ["0.0.0.0/0"] 
+  default     = ["0.0.0.0/0"]
 }
 
 variable "tags" {
