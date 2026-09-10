@@ -22,16 +22,16 @@ resource "aws_cloudfront_origin_access_control" "s3_oac" {
 
 # 3. CloudFront 배포 생성 (다중 오리진: EC2 + S3)
 resource "aws_cloudfront_distribution" "main" {
-  enabled             = true
-  is_ipv6_enabled     = true
-  comment             = "${var.project_name} ${var.environment} CloudFront CDN"
-  price_class         = "PriceClass_200" # 한국, 아시아, 북미, 유럽 엣지 포함
+  enabled         = true
+  is_ipv6_enabled = true
+  comment         = "${var.project_name} ${var.environment} CloudFront CDN"
+  price_class     = "PriceClass_200" # 한국, 아시아, 북미, 유럽 엣지 포함
   # ----------------------------------------------------
   # 오리진 1: 개발용 EC2 인스턴스 (웹/API)
   # ----------------------------------------------------
   origin {
     domain_name = var.app_origin_domain # 찾아갈 원본 서버 주소
-    origin_id   = var.app_origin_id # Cloudfront 내부에서 부를 식별자
+    origin_id   = var.app_origin_id     # Cloudfront 내부에서 부를 식별자
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -44,30 +44,30 @@ resource "aws_cloudfront_distribution" "main" {
   # ----------------------------------------------------
   origin {
     domain_name              = var.media_origin_domain
-    origin_id                = var.media_origin_id  
+    origin_id                = var.media_origin_id
     origin_access_control_id = aws_cloudfront_origin_access_control.s3_oac.id
   }
   # ----------------------------------------------------
   # 동작 1: 기본 경로 (/*) -> App 서버로 전달 (캐시 OFF)
   # ----------------------------------------------------
   default_cache_behavior {
-    target_origin_id       = var.app_origin_id # 도착지 : App 서비스
-    viewer_protocol_policy = "redirect-to-https" # http -> https로 전환
-    allowed_methods = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"] # 모든 메서드 허용
-    cached_methods  = ["GET", "HEAD"] # GET, HEAD만 캐시
-    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id # 캐시 비활성화
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id # 모든 헤더 전달
+    target_origin_id         = var.app_origin_id                                            # 도착지 : App 서비스
+    viewer_protocol_policy   = "redirect-to-https"                                          # http -> https로 전환
+    allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"] # 모든 메서드 허용
+    cached_methods           = ["GET", "HEAD"]                                              # GET, HEAD만 캐시
+    cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id         # 캐시 비활성화
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id      # 모든 헤더 전달
   }
   # ----------------------------------------------------
   # 동작 2: 미디어 경로 (/media/*) -> S3로 전달 (캐시 ON) 
   # ----------------------------------------------------
   ordered_cache_behavior {
-    path_pattern     = "/media/*"
-    target_origin_id = var.media_origin_id
+    path_pattern           = "/media/*"
+    target_origin_id       = var.media_origin_id
     viewer_protocol_policy = "redirect-to-https"
-    allowed_methods = ["GET", "HEAD", "OPTIONS"]
-    cached_methods  = ["GET", "HEAD"]
-    cache_policy_id = data.aws_cloudfront_cache_policy.caching_optimized.id
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
   }
   # ----------------------------------------------------
   # 기타 기본 보안 및 인증서
