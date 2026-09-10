@@ -19,3 +19,9 @@ data "terraform_remote_state" "bootstrap" {
     profile = "team6-infra"
   }
 }
+
+# 3. 기존 Hosted Zone 조회 (신규 생성 아님, 이슈 #8)
+data "aws_route53_zone" "existing" {
+  name         = "${var.domain_name}."
+  private_zone = false
+}
