@@ -26,6 +26,7 @@ resource "aws_cloudfront_distribution" "main" {
   is_ipv6_enabled = true
   comment         = "${var.project_name} ${var.environment} CloudFront CDN"
   price_class     = "PriceClass_200" # 한국, 아시아, 북미, 유럽 엣지 포함
+  web_acl_id      = var.web_acl_id   # WAF WebACL ARN, null이면 미연결
   # ----------------------------------------------------
   # 오리진 1: 개발용 EC2 인스턴스 (웹/API)
   # ----------------------------------------------------
