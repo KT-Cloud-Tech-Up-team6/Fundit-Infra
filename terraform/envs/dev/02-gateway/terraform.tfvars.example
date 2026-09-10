@@ -1,4 +1,4 @@
-project_name = "Fundit"
+project_name = "fundit"
 environment  = "dev"
 common_tags = {
   Project   = "Fundit"
