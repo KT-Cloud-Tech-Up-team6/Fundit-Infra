@@ -1,4 +1,4 @@
-project_name = "Fundit"
+project_name = "fundit"
 environment  = "dev"
 vpc_cidr     = "10.0.0.0/16"
 

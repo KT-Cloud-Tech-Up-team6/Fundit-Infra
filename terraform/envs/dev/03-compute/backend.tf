@@ -11,7 +11,7 @@ terraform {
     bucket       = "fundit-tfstate-team6"
     key          = "dev/compute/terraform.tfstate"
     region       = "ap-northeast-2"
-    profile      = "final"
+    profile      = "team6-infra"
     use_lockfile = true
   }
 }

@@ -11,7 +11,7 @@ terraform {
     bucket       = "fundit-tfstate-team6"          # 아까 만든 버킷 이름
     key          = "dev/network/terraform.tfstate" # 고유한 경로 지정!
     region       = "ap-northeast-2"
-    profile      = "final"
+    profile      = "team6-infra"
     use_lockfile = true # S3 Native Lock 활성화!
   }
 }

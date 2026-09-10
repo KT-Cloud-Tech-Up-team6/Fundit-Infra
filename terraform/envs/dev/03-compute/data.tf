@@ -5,7 +5,7 @@ data "terraform_remote_state" "network" {
     bucket  = "fundit-tfstate-team6"
     key     = "dev/network/terraform.tfstate"
     region  = "ap-northeast-2"
-    profile = "final"
+    profile = "team6-infra"
   }
 }
 
