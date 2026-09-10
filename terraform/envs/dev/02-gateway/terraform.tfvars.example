@@ -1,0 +1,7 @@
+project_name = "Fundit"
+environment  = "dev"
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
