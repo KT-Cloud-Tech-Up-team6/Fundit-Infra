@@ -1,0 +1,7 @@
+keda_chart_version = "2.20.2"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
