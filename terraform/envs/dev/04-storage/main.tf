@@ -25,24 +25,3 @@ module "media_bucket" {
   prevent_destroy   = true
   tags              = var.common_tags
 }
-
-# 기존 bootstrap에서 생성된 S3 버킷을 무중단으로 04-storage로 이관하기 위한 import 블록
-import {
-  to = module.media_bucket.aws_s3_bucket.protected[0]
-  id = "fundit-media-dev-team6"
-}
-
-import {
-  to = module.media_bucket.aws_s3_bucket_versioning.this
-  id = "fundit-media-dev-team6"
-}
-
-import {
-  to = module.media_bucket.aws_s3_bucket_server_side_encryption_configuration.this
-  id = "fundit-media-dev-team6"
-}
-
-import {
-  to = module.media_bucket.aws_s3_bucket_public_access_block.this
-  id = "fundit-media-dev-team6"
-}
