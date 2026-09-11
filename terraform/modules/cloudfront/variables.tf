@@ -36,3 +36,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "web_acl_id" {
+  description = "연결할 WAF WebACL ARN (scope=CLOUDFRONT). 지정 안 하면 WAF 미연결"
+  type        = string
+  default     = null
+}
