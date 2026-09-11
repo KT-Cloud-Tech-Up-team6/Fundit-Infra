@@ -1,0 +1,7 @@
+karpenter_chart_version = "1.14.0"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
