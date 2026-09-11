@@ -147,8 +147,8 @@ resource "aws_eks_node_group" "system" {
   }
 
   labels = {
-    role                           = "system"
-    "app.kubernetes.io/managed-by" = "terraform"
+    role       = "system"
+    managed-by = "terraform"
   }
 
   depends_on = [
