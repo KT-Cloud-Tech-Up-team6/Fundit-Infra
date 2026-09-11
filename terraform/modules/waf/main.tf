@@ -11,7 +11,7 @@ terraform {
 resource "aws_wafv2_web_acl" "cloudfront" {
   provider    = aws.us_east_1
   name        = "${var.project_name}-${var.environment}-cloudfront-waf"
-  description = "CloudFront 앞단 웹 공격 차단 (Core rule set, SQLi rule set)"
+  description = "CloudFront edge WAF: AWS common and SQLi managed rule sets"
   scope       = "CLOUDFRONT"
 
   default_action {
