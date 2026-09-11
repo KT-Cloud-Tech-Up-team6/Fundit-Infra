@@ -90,13 +90,15 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# 8. 프라이빗 라우팅 테이블 (내부 통신용)
+# 8. 프라이빗 라우팅 테이블 (AZ별 분리: 2AZ HA 지원)
 resource "aws_route_table" "private" {
+  count  = length(var.private_subnet_cidrs)
   vpc_id = aws_vpc.main.id
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-private-rt"
+      Name = "${var.project_name}-${var.environment}-private-rt-${count.index + 1}"
+      Type = "Private"
     }
   )
 }
@@ -105,5 +107,5 @@ resource "aws_route_table" "private" {
 resource "aws_route_table_association" "private" {
   count          = length(aws_subnet.private)
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[count.index].id
 }
