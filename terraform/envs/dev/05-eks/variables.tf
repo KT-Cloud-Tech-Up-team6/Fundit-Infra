@@ -5,7 +5,7 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "배포 환경 (dev, staging, prod)"
+  description = "배포 환경"
   type        = string
   default     = "dev"
 }
@@ -16,18 +16,8 @@ variable "cluster_version" {
   default     = "1.35"
 }
 
-variable "vpc_id" {
-  description = "EKS 클러스터가 위치할 VPC ID"
-  type        = string
-}
-
-variable "subnet_ids" {
-  description = "EKS 클러스터 제어부 ENI 및 워커 노드가 배치될 서브넷 ID 목록"
-  type        = list(string)
-}
-
 variable "node_instance_types" {
-  description = "시스템 노드 그룹의 EC2 인스턴스 유형 목록"
+  description = "시스템 노드 인스턴스 유형"
   type        = list(string)
   default     = ["t3.medium"]
 }
@@ -50,8 +40,8 @@ variable "max_size" {
   default     = 4
 }
 
-variable "tags" {
-  description = "추가 리소스 태그"
+variable "common_tags" {
+  description = "공통 태그"
   type        = map(string)
   default     = {}
 }

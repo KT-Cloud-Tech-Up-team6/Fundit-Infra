@@ -22,7 +22,7 @@ resource "aws_internet_gateway" "main" {
   )
 }
 
-# 3. 퍼블릭 서브넷 (EC2 배치용)
+# 3. 퍼블릭 서브넷 (EC2 및 ALB 배치용)
 resource "aws_subnet" "public" {
   count                   = length(var.public_subnet_cidrs)
   vpc_id                  = aws_vpc.main.id
@@ -32,13 +32,15 @@ resource "aws_subnet" "public" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-public-sn-${count.index + 1}"
-      Type = "Public"
+      Name                                                               = "${var.project_name}-${var.environment}-public-sn-${count.index + 1}"
+      Type                                                               = "Public"
+      "kubernetes.io/role/elb"                                           = "1"
+      "kubernetes.io/cluster/${var.project_name}-${var.environment}-eks" = "shared"
     }
   )
 }
 
-# 4. 프라이빗 앱 서브넷 (추후 EKS/App용)
+# 4. 프라이빗 앱 서브넷 (EKS 노드 배치용)
 resource "aws_subnet" "private" {
   count             = length(var.private_subnet_cidrs)
   vpc_id            = aws_vpc.main.id
@@ -47,8 +49,11 @@ resource "aws_subnet" "private" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-private-sn-${count.index + 1}"
-      Type = "Private"
+      Name                                                               = "${var.project_name}-${var.environment}-private-sn-${count.index + 1}"
+      Type                                                               = "Private"
+      "kubernetes.io/role/internal-elb"                                  = "1"
+      "karpenter.sh/discovery"                                           = "${var.project_name}-${var.environment}-eks"
+      "kubernetes.io/cluster/${var.project_name}-${var.environment}-eks" = "shared"
     }
   )
 }
