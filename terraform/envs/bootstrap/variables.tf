@@ -26,3 +26,9 @@ variable "ecr_repository_names" {
   description = "생성할 ECR 리포지토리 이름 목록"
   default     = ["fundit-backend", "fundit-frontend"]
 }
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub Actions CI/CD를 허용할 리포지토리 (org/repo 형식)"
+  default     = "KT-Cloud-Tech-Up-team6/Fundit-Infra"
+}
