@@ -9,12 +9,12 @@ data "terraform_remote_state" "compute" {
   }
 }
 
-# 2. bootstrap 원격 상태에서 미디어 S3 버킷 정보 조회
-data "terraform_remote_state" "bootstrap" {
+# 2. 04-storage 원격 상태에서 미디어 S3 버킷 정보 조회 (이슈 #30)
+data "terraform_remote_state" "storage" {
   backend = "s3"
   config = {
     bucket  = "fundit-tfstate-team6"
-    key     = "bootstrap/terraform.tfstate"
+    key     = "dev/storage/terraform.tfstate"
     region  = "ap-northeast-2"
     profile = "team6-infra"
   }
