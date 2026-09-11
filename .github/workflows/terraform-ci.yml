@@ -1,0 +1,142 @@
+name: "Terraform CI (PR Plan)"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-ci.yml"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  filter:
+    name: "Detect Changed Layers"
+    runs-on: ubuntu-latest
+    outputs:
+      layers: ${{ steps.changes.outputs.changes }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Paths Filter
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            bootstrap:
+              - 'terraform/envs/bootstrap/**'
+            network:
+              - 'terraform/envs/dev/01-network/**'
+              - 'terraform/modules/vpc/**'
+              - 'terraform/modules/nat-instance/**'
+            storage:
+              - 'terraform/envs/dev/04-storage/**'
+              - 'terraform/modules/s3/**'
+            gateway:
+              - 'terraform/envs/dev/02-gateway/**'
+              - 'terraform/modules/waf/**'
+            compute:
+              - 'terraform/envs/dev/03-compute/**'
+            eks:
+              - 'terraform/envs/dev/05-eks/**'
+              - 'terraform/modules/eks/**'
+            karpenter:
+              - 'terraform/envs/dev/06-karpenter/**'
+            keda:
+              - 'terraform/envs/dev/07-keda/**'
+
+  plan:
+    name: "Terraform Plan"
+    needs: filter
+    if: ${{ needs.filter.outputs.layers != '[]' && needs.filter.outputs.layers != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: ${{ fromJSON(needs.filter.outputs.layers) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Map Layer to Directory
+        id: dir
+        run: |
+          case "${{ matrix.layer }}" in
+            bootstrap) echo "path=terraform/envs/bootstrap" >> $GITHUB_OUTPUT ;;
+            network) echo "path=terraform/envs/dev/01-network" >> $GITHUB_OUTPUT ;;
+            storage) echo "path=terraform/envs/dev/04-storage" >> $GITHUB_OUTPUT ;;
+            gateway) echo "path=terraform/envs/dev/02-gateway" >> $GITHUB_OUTPUT ;;
+            compute) echo "path=terraform/envs/dev/03-compute" >> $GITHUB_OUTPUT ;;
+            eks) echo "path=terraform/envs/dev/05-eks" >> $GITHUB_OUTPUT ;;
+            karpenter) echo "path=terraform/envs/dev/06-karpenter" >> $GITHUB_OUTPUT ;;
+            keda) echo "path=terraform/envs/dev/07-keda" >> $GITHUB_OUTPUT ;;
+            *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
+          esac
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::899957568205:role/fundit-terraform-ci-role
+          aws-region: ap-northeast-2
+
+      - name: Setup AWS Profile for team6-infra
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile team6-infra
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile team6-infra
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile team6-infra
+          aws configure set region "ap-northeast-2" --profile team6-infra
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+        working-directory: ${{ steps.dir.outputs.path }}
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ steps.dir.outputs.path }}
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
+        working-directory: ${{ steps.dir.outputs.path }}
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -no-color -out=tfplan || exit 1
+          terraform show -no-color tfplan > plan_output.txt
+        working-directory: ${{ steps.dir.outputs.path }}
+
+      - name: Post Plan Summary to PR
+        uses: actions/github-script@v7
+        if: always() && steps.plan.outcome != 'skipped'
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '${{ steps.dir.outputs.path }}/plan_output.txt';
+            let planOutput = 'Plan output not found';
+            if (fs.existsSync(path)) {
+              planOutput = fs.readFileSync(path, 'utf8');
+            }
+            if (planOutput.length > 60000) {
+              planOutput = planOutput.substring(0, 60000) + '\n... (output truncated due to length)';
+            }
+            const status = '${{ steps.plan.outcome }}' === 'success' ? 'SUCCESS' : 'FAILED';
+            const body = `### Terraform Plan: \`${{ matrix.layer }}\` (${status})\n\n` +
+              `<details><summary>Show Plan Output</summary>\n\n` +
+              `\`\`\`terraform\n${planOutput}\n\`\`\`\n\n` +
+              `</details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

@@ -26,7 +26,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 # ====================================================
 resource "aws_iam_role" "terraform_ci" {
   name        = "fundit-terraform-ci-role"
-  description = "GitHub Actions Terraform CI/CD 파이프라인 실행용 IAM Role"
+  description = "IAM Role for GitHub Actions Terraform CI/CD pipeline"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
