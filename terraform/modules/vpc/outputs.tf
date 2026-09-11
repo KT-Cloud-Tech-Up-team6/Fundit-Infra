@@ -27,3 +27,9 @@ output "internet_gateway_id" {
   description = "인터넷 게이트웨이 ID"
   value       = aws_internet_gateway.main.id
 }
+
+# 프라이빗 라우팅 테이블 목록 추가 (NAT 인스턴스 연동용)
+output "private_route_table_ids" {
+  description = "프라이빗 라우팅 테이블 ID 리스트 (AZ별 분리)"
+  value       = aws_route_table.private[*].id
+}
