@@ -60,7 +60,8 @@ resource "aws_instance" "nat" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-nat-${count.index + 1}"
+      Name      = "${var.project_name}-${var.environment}-nat-${count.index + 1}"
+      AutoSleep = "true"
     }
   )
 }

@@ -42,6 +42,7 @@ jobs:
               - 'terraform/modules/waf/**'
             compute:
               - 'terraform/envs/dev/03-compute/**'
+              - 'terraform/modules/ec2/**'
             eks:
               - 'terraform/envs/dev/05-eks/**'
               - 'terraform/modules/eks/**'
