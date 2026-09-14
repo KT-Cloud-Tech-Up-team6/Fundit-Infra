@@ -188,3 +188,13 @@ resource "aws_eks_addon" "coredns" {
     aws_eks_node_group.system
   ]
 }
+
+# HPA가 CPU/메모리 사용률을 읽는 Metrics API 제공용. GitOps #1(HPA) 선행 조건
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "metrics-server"
+
+  depends_on = [
+    aws_eks_node_group.system
+  ]
+}
