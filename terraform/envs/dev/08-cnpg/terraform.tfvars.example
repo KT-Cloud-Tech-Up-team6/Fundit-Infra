@@ -1,0 +1,9 @@
+cnpg_chart_version     = "0.29.0"
+backup_namespace       = "dev"
+postgres_cluster_name  = "fundit-dev-postgres"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
