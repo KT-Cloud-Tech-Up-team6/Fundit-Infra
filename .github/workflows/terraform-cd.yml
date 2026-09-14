@@ -1,0 +1,107 @@
+name: "Terraform CD (Main Apply)"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-cd.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  filter:
+    name: "Detect Changed Layers"
+    runs-on: ubuntu-latest
+    outputs:
+      layers: ${{ steps.changes.outputs.changes }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Paths Filter
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            bootstrap:
+              - 'terraform/envs/bootstrap/**'
+            network:
+              - 'terraform/envs/dev/01-network/**'
+              - 'terraform/modules/vpc/**'
+              - 'terraform/modules/nat-instance/**'
+            storage:
+              - 'terraform/envs/dev/04-storage/**'
+              - 'terraform/modules/s3/**'
+            gateway:
+              - 'terraform/envs/dev/02-gateway/**'
+              - 'terraform/modules/waf/**'
+            compute:
+              - 'terraform/envs/dev/03-compute/**'
+            eks:
+              - 'terraform/envs/dev/05-eks/**'
+              - 'terraform/modules/eks/**'
+            karpenter:
+              - 'terraform/envs/dev/06-karpenter/**'
+            keda:
+              - 'terraform/envs/dev/07-keda/**'
+
+  apply:
+    name: "Terraform Apply"
+    needs: filter
+    if: ${{ needs.filter.outputs.layers != '[]' && needs.filter.outputs.layers != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::899957568205:role/fundit-terraform-ci-role
+          aws-region: ap-northeast-2
+
+      - name: Setup AWS Profile for team6-infra
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile team6-infra
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile team6-infra
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile team6-infra
+          aws configure set region "ap-northeast-2" --profile team6-infra
+
+      - name: Apply Changed Layers Sequentially
+        run: |
+          ORDERED_LAYERS=(
+            "bootstrap:terraform/envs/bootstrap"
+            "network:terraform/envs/dev/01-network"
+            "storage:terraform/envs/dev/04-storage"
+            "gateway:terraform/envs/dev/02-gateway"
+            "compute:terraform/envs/dev/03-compute"
+            "eks:terraform/envs/dev/05-eks"
+            "karpenter:terraform/envs/dev/06-karpenter"
+            "keda:terraform/envs/dev/07-keda"
+          )
+
+          CHANGED='${{ needs.filter.outputs.layers }}'
+          echo "Changed layers JSON: $CHANGED"
+
+          for entry in "${ORDERED_LAYERS[@]}"; do
+            KEY="${entry%%:*}"
+            DIR="${entry##*:}"
+
+            if echo "$CHANGED" | grep -q "\"$KEY\""; then
+              echo "=========================================="
+              echo "Applying layer: $KEY ($DIR)"
+              echo "=========================================="
+              cd "$GITHUB_WORKSPACE/$DIR"
+              terraform init
+              terraform apply -auto-approve
+            fi
+          done

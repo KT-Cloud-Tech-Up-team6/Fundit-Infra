@@ -13,6 +13,7 @@ variable "aws_profile" {
 variable "state_bucket_name" {
   type        = string
   description = "Terraform State를 저장할 S3 버킷 이름"
+  default     = "fundit-tfstate-team6"
 }
 
 variable "common_tags" {
@@ -25,4 +26,10 @@ variable "ecr_repository_names" {
   type        = list(string)
   description = "생성할 ECR 리포지토리 이름 목록"
   default     = ["fundit-backend", "fundit-frontend"]
+}
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub Actions CI/CD를 허용할 리포지토리 (org/repo 형식)"
+  default     = "KT-Cloud-Tech-Up-team6/Fundit-Infra"
 }
