@@ -13,6 +13,7 @@ variable "aws_profile" {
 variable "state_bucket_name" {
   type        = string
   description = "Terraform State를 저장할 S3 버킷 이름"
+  default     = "fundit-tfstate-team6"
 }
 
 variable "common_tags" {

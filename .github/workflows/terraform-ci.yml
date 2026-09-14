@@ -111,7 +111,7 @@ jobs:
       - name: Terraform Plan
         id: plan
         run: |
-          terraform plan -no-color -out=tfplan || exit 1
+          terraform plan -input=false -no-color -out=tfplan || exit 1
           terraform show -no-color tfplan > plan_output.txt
         working-directory: ${{ steps.dir.outputs.path }}
 
