@@ -54,6 +54,7 @@ jobs:
     needs: filter
     if: ${{ needs.filter.outputs.layers != '[]' && needs.filter.outputs.layers != '' }}
     runs-on: ubuntu-latest
+    environment: dev-apply
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
