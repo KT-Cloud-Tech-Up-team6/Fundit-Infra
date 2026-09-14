@@ -151,6 +151,13 @@ resource "aws_eks_node_group" "system" {
     managed-by = "terraform"
   }
 
+  lifecycle {
+    ignore_changes = [
+      scaling_config[0].desired_size,
+      scaling_config[0].min_size,
+    ]
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.node_worker,
     aws_iam_role_policy_attachment.node_cni,

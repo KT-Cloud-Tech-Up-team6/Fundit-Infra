@@ -23,7 +23,8 @@ resource "aws_instance" "app" {
   tags = merge(
     var.tags,
     {
-      Name = "${var.project_name}-${var.environment}-app-ec2"
+      Name      = "${var.project_name}-${var.environment}-app-ec2"
+      AutoSleep = "true"
     }
   )
 }
