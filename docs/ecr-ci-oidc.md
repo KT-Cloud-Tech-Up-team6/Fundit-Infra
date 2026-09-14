@@ -22,6 +22,11 @@ Fundit-Infra [Issue #37](https://github.com/KT-Cloud-Tech-Up-team6/Fundit-Infra/
 `bootstrap` 변경은 기존 Terraform CI/CD의 감지 대상이므로 실제 반영 일정은 AWS 담당자와
 협의한다. main 병합 후 CD가 실행될 수 있다는 점도 함께 확인한다.
 
+bootstrap CI/CD는 ignore된 팀별 tfvars를 사용하지 않는다. 공통 태그 변수의 기본값을
+네이밍규약서와 실제 자원에 적용된 `Project=Fundit`, `Team=Team6`, `ManagedBy=Terraform`으로
+맞춰, plan/apply가 기존 자원에서 태그를 제거하지 않게 한다. 명시적인 tfvars가 있으면
+Terraform 변수 우선순위에 따라 그 값이 기본값을 대체한다.
+
 ## 신뢰하는 GitHub 실행
 
 2026-09-14 GitHub API 조회 결과 두 저장소는 모두 `use_default: true`,

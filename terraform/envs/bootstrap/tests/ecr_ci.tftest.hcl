@@ -83,6 +83,16 @@ run "write_permissions_do_not_cross_repositories" {
   command = apply
 
   assert {
+    condition = alltrue([
+      for role in aws_iam_role.ecr_ci :
+      role.tags["Project"] == "Fundit" &&
+      role.tags["Team"] == "Team6" &&
+      role.tags["ManagedBy"] == "Terraform"
+    ])
+    error_message = "CI Role은 bootstrap 기존 리소스와 같은 공통 태그를 유지해야 합니다."
+  }
+
+  assert {
     condition = (
       aws_iam_role_policy.ecr_ci_push["backend"].role == "fundit-backend-ci-role" &&
       aws_iam_role_policy.ecr_ci_push["frontend"].role == "fundit-frontend-ci-role" &&

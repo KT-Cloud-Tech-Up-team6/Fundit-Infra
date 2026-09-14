@@ -19,7 +19,11 @@ variable "state_bucket_name" {
 variable "common_tags" {
   type        = map(string)
   description = "공통 태그 목록"
-  default     = {}
+  default = {
+    Project   = "Fundit"
+    Team      = "Team6"
+    ManagedBy = "Terraform"
+  }
 }
 
 variable "ecr_repository_names" {
