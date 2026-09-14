@@ -38,9 +38,13 @@ resource "aws_iam_role" "terraform_ci" {
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
-          # 우리 팀의 Fundit-Infra 리포지토리에서 온 요청만 승인
+          # 우리 팀의 Fundit-Infra 리포지토리에서 온 요청만 승인 (조직/리포지토리 ID 포맷 포함)
           StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"          }
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:${var.github_repo}:*",
+              "repo:KT-Cloud-Tech-Up-team6*/Fundit-Infra*:*"
+            ]
+          }
           # STS를 수신자로 하는 토큰만 승인
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
