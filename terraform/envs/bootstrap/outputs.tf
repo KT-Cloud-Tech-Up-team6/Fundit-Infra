@@ -22,3 +22,8 @@ output "github_oidc_provider_arn" {
   value       = aws_iam_openid_connect_provider.github.arn
   description = "GitHub Actions OIDC Provider ARN"
 }
+
+output "ecr_ci_role_arns" {
+  value       = { for name, role in aws_iam_role.ecr_ci : name => role.arn }
+  description = "애플리케이션 이미지 Push용 IAM Role ARN (backend/frontend)"
+}

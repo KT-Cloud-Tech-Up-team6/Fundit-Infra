@@ -1,0 +1,42 @@
+name: Validate ECR CI permissions
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/envs/bootstrap/**"
+      - "terraform/modules/ecr/**"
+      - "terraform/modules/s3/**"
+      - ".github/workflows/validate-ecr-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "terraform/envs/bootstrap/**"
+      - "terraform/modules/ecr/**"
+      - "terraform/modules/s3/**"
+      - ".github/workflows/validate-ecr-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: terraform/envs/bootstrap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Check formatting
+        run: terraform fmt -check 04.ECRPushOIDC.tf outputs.tf tests/ecr_ci.tftest.hcl
+      - name: Initialize without state backend
+        run: terraform init -backend=false -lockfile=readonly -input=false
+      - name: Validate Terraform configuration
+        run: terraform validate -no-color
+      - name: Test IAM boundaries with mock providers
+        run: terraform test -filter=tests/ecr_ci.tftest.hcl -no-color
