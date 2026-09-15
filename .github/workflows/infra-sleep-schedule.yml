@@ -41,16 +41,15 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             ACTION="${{ github.event.inputs.action }}"
             echo "Triggered manually via workflow_dispatch with action: $ACTION"
+          elif [ "${{ github.event.schedule }}" = "0 12 * * 1-5" ]; then
+            ACTION="sleep"
+            echo "Triggered via schedule (0 12 * * 1-5). Action: sleep"
+          elif [ "${{ github.event.schedule }}" = "30 23 * * 0-4" ]; then
+            ACTION="wakeup"
+            echo "Triggered via schedule (30 23 * * 0-4). Action: wakeup"
           else
-            # 스케줄 트리거: 현재 UTC 시간에 따라 절전/기상 자동 판별
-            CURRENT_HOUR=$(date -u +%H)
-            echo "Current UTC hour: $CURRENT_HOUR"
-            if [ "$CURRENT_HOUR" -ge 10 ] && [ "$CURRENT_HOUR" -le 15 ]; then
-              ACTION="sleep"
-            else
-              ACTION="wakeup"
-            fi
-            echo "Triggered via schedule. Inferred action: $ACTION"
+            echo "Error: Unknown trigger event or unexpected schedule: ${{ github.event.schedule }}"
+            exit 1
           fi
           echo "action=$ACTION" >> $GITHUB_OUTPUT
 
@@ -89,10 +88,10 @@ jobs:
             echo "EKS nodegroup already at desiredSize <= 1. Skipping scale down."
           fi
 
-          # 2. 개발용 EC2 인스턴스 중지
+          # 2. 개발용 EC2 인스턴스 중지 (AutoSleep 태그 기반)
           echo "[Step 2/3] Stopping Development App EC2 instances..."
           APP_INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=fundit-dev-app-ec2" "Name=instance-state-name,Values=running" \
+            --filters "Name=tag:AutoSleep,Values=true" "Name=tag:Name,Values=fundit-dev-app-ec2" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
@@ -103,10 +102,10 @@ jobs:
             echo "No running App EC2 found."
           fi
 
-          # 3. NAT 인스턴스 중지 (2 AZ)
+          # 3. NAT 인스턴스 중지 (AutoSleep 태그 기반, 2 AZ)
           echo "[Step 3/3] Stopping NAT instances..."
           NAT_INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=running" \
+            --filters "Name=tag:AutoSleep,Values=true" "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
@@ -131,15 +130,15 @@ jobs:
           echo "[WAKEUP] Starting Infrastructure Recovery Sequence"
           echo "=========================================="
 
-          # 1. NAT 인스턴스 시작 (Egress 인터넷 경로 확보)
+          # 1. NAT 인스턴스 시작 (AutoSleep 태그 기반, Egress 인터넷 경로 확보)
           echo "[Step 1/4] Starting NAT instances..."
           NAT_INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=stopped" \
+            --filters "Name=tag:AutoSleep,Values=true" "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=stopped" \
             --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
           ALL_NAT_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=running,stopped,pending" \
+            --filters "Name=tag:AutoSleep,Values=true" "Name=tag:Name,Values=fundit-dev-nat-*" "Name=instance-state-name,Values=running,stopped,pending" \
             --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
@@ -157,10 +156,10 @@ jobs:
             echo "NAT instances are now running and healthy."
           fi
 
-          # 3. 개발용 EC2 인스턴스 시작
+          # 3. 개발용 EC2 인스턴스 시작 (AutoSleep 태그 기반)
           echo "[Step 3/4] Starting Development App EC2..."
           APP_INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=fundit-dev-app-ec2" "Name=instance-state-name,Values=stopped" \
+            --filters "Name=tag:AutoSleep,Values=true" "Name=tag:Name,Values=fundit-dev-app-ec2" "Name=instance-state-name,Values=stopped" \
             --query "Reservations[].Instances[].InstanceId" \
             --output text)
 
