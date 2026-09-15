@@ -44,17 +44,14 @@ resource "aws_iam_role" "terraform_ci" {
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
-          # PR 이벤트 및 main 브랜치 푸시/머지 이벤트만 허용 (임의 브랜치 차단)
-          StringLike = {
-            "token.actions.githubusercontent.com:sub" = [
-              "repo:${var.github_repo}:pull_request",
-              "repo:${var.github_repo}:ref:refs/heads/main",
-              "repo:KT-Cloud-Tech-Up-team6*/Fundit-Infra*:pull_request",
-              "repo:KT-Cloud-Tech-Up-team6*/Fundit-Infra*:ref:refs/heads/main"
-            ]
-          }
-          # STS를 수신자로 하는 토큰만 승인
+          # PR 이벤트, main 머지, 그리고 dev-apply 승인 환경에서의 토큰만 허용 (임의 브랜치 차단)
+          # 저장소의 use_immutable_subject=true 설정에 맞춰 Immutable Subject만 엄격하게 허용
           StringEquals = {
+            "token.actions.githubusercontent.com:sub" = [
+              "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Infra@1359714718:pull_request",
+              "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Infra@1359714718:ref:refs/heads/main",
+              "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Infra@1359714718:environment:dev-apply"
+            ]
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
         }
