@@ -27,3 +27,18 @@ output "ecr_ci_role_arns" {
   value       = { for name, role in aws_iam_role.ecr_ci : name => role.arn }
   description = "애플리케이션 이미지 Push용 IAM Role ARN (backend/frontend)"
 }
+
+output "gitops_dev_deploy_role_arn" {
+  value       = aws_iam_role.gitops_dev_deploy.arn
+  description = "GitOps 개발 EC2 배포용 IAM Role ARN"
+}
+
+output "gitops_dev_deploy_document_name" {
+  value       = aws_ssm_document.gitops_dev_deploy.name
+  description = "Gateway 배포 전용 SSM Command 문서 이름"
+}
+
+output "gitops_dev_deploy_document_version" {
+  value       = aws_ssm_document.gitops_dev_deploy.latest_version
+  description = "검토 후 GitOps Environment에 설정할 SSM 문서 버전"
+}

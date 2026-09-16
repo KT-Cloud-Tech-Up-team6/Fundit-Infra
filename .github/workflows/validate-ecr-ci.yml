@@ -1,4 +1,4 @@
-name: Validate ECR CI permissions
+name: Validate CI and deployment permissions
 
 on:
   pull_request:
@@ -33,7 +33,7 @@ jobs:
         with:
           terraform_version: "1.10.5"
       - name: Check formatting
-        run: terraform fmt -check 04.ECRPushOIDC.tf outputs.tf tests/ecr_ci.tftest.hcl
+        run: terraform fmt -check 04.ECRPushOIDC.tf 05.GitOpsDeployOIDC.tf outputs.tf tests/ecr_ci.tftest.hcl
       - name: Initialize without state backend
         run: terraform init -backend=false -lockfile=readonly -input=false
       - name: Validate Terraform configuration

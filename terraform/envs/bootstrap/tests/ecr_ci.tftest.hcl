@@ -27,6 +27,13 @@ override_resource {
   }
 }
 
+override_resource {
+  target = aws_ssm_document.gitops_dev_deploy
+  values = {
+    arn = "arn:aws:ssm:ap-northeast-2:123456789012:document/fundit-dev-deploy-gateway"
+  }
+}
+
 override_module {
   target = module.tfstate_bucket
   outputs = {
@@ -117,5 +124,103 @@ run "write_permissions_do_not_cross_repositories" {
       ])
     ])
     error_message = "저장소 전체에 허용하는 작업은 로그인뿐이며, 이미지 작업은 Push에 필요한 권한으로 제한해야 합니다."
+  }
+}
+
+run "gitops_deployment_permissions_are_bounded" {
+  command = apply
+
+  assert {
+    condition = (
+      aws_iam_role.gitops_dev_deploy.name == "fundit-dev-gitops-deploy-role" &&
+      length(jsondecode(aws_iam_role.gitops_dev_deploy.assume_role_policy).Statement) == 1 &&
+      jsondecode(aws_iam_role.gitops_dev_deploy.assume_role_policy).Statement[0].Effect == "Allow" &&
+      jsondecode(aws_iam_role.gitops_dev_deploy.assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
+      jsondecode(aws_iam_role.gitops_dev_deploy.assume_role_policy).Statement[0].Principal == {
+        Federated = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+      } &&
+      jsondecode(aws_iam_role.gitops_dev_deploy.assume_role_policy).Statement[0].Condition == {
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          "token.actions.githubusercontent.com:sub" = "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-GitOps@1359714048:environment:dev-deploy"
+        }
+      }
+    )
+    error_message = "GitOps 배포 Role은 기존 OIDC 공급자와 정확한 immutable dev-deploy subject/aud만 신뢰해야 합니다."
+  }
+
+  assert {
+    condition = (
+      aws_iam_role_policy.gitops_dev_deploy.role == "fundit-dev-gitops-deploy-role" &&
+      aws_iam_role_policy.gitops_dev_deploy.name == "ssm-dev-deploy" &&
+      length(jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement) == 3 &&
+      alltrue([for statement in jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement : statement.Effect == "Allow"]) &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[0].Action == "ssm:SendCommand" &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[0].Resource ==
+      "arn:aws:ssm:ap-northeast-2:123456789012:document/fundit-dev-deploy-gateway" &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[1].Action == "ssm:SendCommand" &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[1].Resource ==
+      "arn:aws:ec2:ap-northeast-2:123456789012:instance/*" &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[1].Condition == {
+        StringEquals = {
+          "ssm:resourceTag/Name"    = "fundit-dev-app-ec2"
+          "ssm:resourceTag/Project" = "Fundit"
+        }
+      }
+    )
+    error_message = "SSM 실행은 전용 문서와 Name/Project 두 태그가 모두 맞는 계정·리전 내 앱 EC2로 제한해야 합니다."
+  }
+
+  assert {
+    condition = (
+      toset(jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[2].Action) == toset([
+        "ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"
+      ]) &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[2].Resource == "*" &&
+      jsondecode(aws_iam_role_policy.gitops_dev_deploy.policy).Statement[2].Condition == {
+        StringEquals = { "aws:RequestedRegion" = "ap-northeast-2" }
+      } &&
+      aws_iam_role.gitops_dev_deploy.tags["Project"] == "Fundit" &&
+      aws_iam_role.gitops_dev_deploy.tags["Team"] == "Team6" &&
+      aws_iam_role.gitops_dev_deploy.tags["ManagedBy"] == "Terraform"
+    )
+    error_message = "전역 Resource는 리전 제한된 SSM 상태 조회 2개만 허용하고 공통 태그를 유지해야 합니다."
+  }
+}
+
+run "gitops_document_only_accepts_a_commit" {
+  command = apply
+
+  assert {
+    condition = (
+      aws_ssm_document.gitops_dev_deploy.name == "fundit-dev-deploy-gateway" &&
+      aws_ssm_document.gitops_dev_deploy.document_type == "Command" &&
+      aws_ssm_document.gitops_dev_deploy.document_format == "JSON" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).schemaVersion == "2.2" &&
+      toset(keys(jsondecode(aws_ssm_document.gitops_dev_deploy.content).parameters)) == toset(["GitCommit"]) &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).parameters.GitCommit.type == "String" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).parameters.GitCommit.allowedPattern == "^[0-9a-f]{40}$" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).parameters.GitCommit.interpolationType == "ENV_VAR" &&
+      !contains(keys(jsondecode(aws_ssm_document.gitops_dev_deploy.content).parameters.GitCommit), "default")
+    )
+    error_message = "문서는 기본값 없는 전체 Git SHA 하나만 받고 ENV_VAR로 전달해야 합니다. 임의 명령·URL·경로 인수를 추가하면 안 됩니다."
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps) == 1 &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps[0].action == "aws:runShellScript" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps[0].name == "deployGateway" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps[0].precondition == {
+        StringEquals = ["platformType", "Linux"]
+      } &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps[0].inputs.timeoutSeconds == "1200" &&
+      jsondecode(aws_ssm_document.gitops_dev_deploy.content).mainSteps[0].inputs.runCommand == [
+        "set -eu",
+        "test -n \"$${SSM_GitCommit:-}\" || exit 1",
+        "exec runuser -u fundit-deploy -- /usr/local/libexec/fundit/deploy-dev-revision \"$SSM_GitCommit\""
+      ]
+    )
+    error_message = "SSM 문서는 ENV_VAR 미지원 시 중단하고 고정된 비로그인 배포 사용자로 설치된 launcher만 실행해야 합니다."
   }
 }
