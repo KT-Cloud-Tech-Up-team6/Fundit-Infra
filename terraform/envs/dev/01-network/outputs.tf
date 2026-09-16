@@ -30,3 +30,26 @@ output "nat_instance_ids" {
   description = "생성된 NAT 인스턴스 ID 목록"
   value       = module.nat_instance.nat_instance_ids
 }
+
+# ----------------------------------------------------
+# VPC Endpoints 출력값 추가
+# ----------------------------------------------------
+output "s3_vpc_endpoint_id" {
+  description = "S3 Gateway VPC 엔드포인트 ID"
+  value       = module.vpc_endpoints.s3_vpc_endpoint_id
+}
+
+output "ecr_api_vpc_endpoint_id" {
+  description = "ECR API Interface VPC 엔드포인트 ID"
+  value       = module.vpc_endpoints.ecr_api_vpc_endpoint_id
+}
+
+output "ecr_dkr_vpc_endpoint_id" {
+  description = "ECR DKR Interface VPC 엔드포인트 ID"
+  value       = module.vpc_endpoints.ecr_dkr_vpc_endpoint_id
+}
+
+output "vpc_endpoint_security_group_id" {
+  description = "VPC 엔드포인트용 보안그룹 ID"
+  value       = module.vpc_endpoints.vpc_endpoint_security_group_id
+}
