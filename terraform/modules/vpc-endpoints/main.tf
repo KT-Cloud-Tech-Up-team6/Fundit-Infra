@@ -5,15 +5,9 @@ resource "aws_security_group" "vpce" {
   name        = "${var.project_name}-${var.environment}-vpce-sg"
   description = "Security group for VPC Interface Endpoints (ECR API, ECR DKR)"
   vpc_id      = var.vpc_id
-
-  # VPC 내부 사설망(EKS 노드 등)에서 오는 HTTPS(443) 인바운드 트래픽 허용
-  ingress {
-    description = "Allow HTTPS from VPC internal CIDR"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
+  # 인바운드 규칙은 최소 권한 원칙 및 계층 간 의존성 분리를 위해 모듈 내부에서 정의하지 않습니다.
+  # 실제 소비자 계층(예: 05-eks)에서 aws_vpc_security_group_ingress_rule 리소스를 통해
+  # EKS 클러스터 보안 그룹(cluster_security_group_id)으로부터의 443 접근을 허용합니다.
 
   egress {
     description = "Allow all outbound traffic"

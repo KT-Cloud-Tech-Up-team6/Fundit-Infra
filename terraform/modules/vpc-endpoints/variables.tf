@@ -14,10 +14,6 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "vpc_cidr" {
-  description = "VPC CIDR 블록 (보안그룹 인바운드 허용용)"
-  type        = string
-}
 
 variable "private_subnet_ids" {
   description = "Interface 엔드포인트(ENI)를 배치할 프라이빗 서브넷 ID 목록"

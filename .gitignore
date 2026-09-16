@@ -31,3 +31,5 @@ Thumbs.db
 
 # Ansible retry files
 *.retry
+.agents/
+
