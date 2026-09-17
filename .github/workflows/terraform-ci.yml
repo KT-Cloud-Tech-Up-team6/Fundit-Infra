@@ -53,6 +53,9 @@ jobs:
               - 'terraform/envs/dev/07-keda/**'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
+            lbc:
+              - 'terraform/envs/dev/11-load-balancer-controller/**'
+              - 'terraform/modules/aws-load-balancer-controller/**'
 
   plan:
     name: "Terraform Plan"
@@ -80,6 +83,7 @@ jobs:
             karpenter) echo "path=terraform/envs/dev/06-karpenter" >> $GITHUB_OUTPUT ;;
             keda) echo "path=terraform/envs/dev/07-keda" >> $GITHUB_OUTPUT ;;
             monitoring) echo "path=terraform/envs/dev/10-monitoring" >> $GITHUB_OUTPUT ;;
+            lbc) echo "path=terraform/envs/dev/11-load-balancer-controller" >> $GITHUB_OUTPUT ;;
             *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
           esac
 
