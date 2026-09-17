@@ -8,5 +8,3 @@ data "terraform_remote_state" "network" {
     profile = "team6-infra"
   }
 }
-
-
