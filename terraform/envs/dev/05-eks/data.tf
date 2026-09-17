@@ -7,4 +7,9 @@ data "terraform_remote_state" "network" {
     region  = "ap-northeast-2"
     profile = "team6-infra"
   }
+
+  defaults = {
+    vpc_endpoint_security_group_id = "sg-00000000000000000"
+  }
 }
+
