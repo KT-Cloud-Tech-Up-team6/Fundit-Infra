@@ -51,6 +51,8 @@ jobs:
               - 'terraform/envs/dev/06-karpenter/**'
             keda:
               - 'terraform/envs/dev/07-keda/**'
+            argocd:
+              - 'terraform/envs/dev/09-argocd/**'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
 
@@ -79,6 +81,7 @@ jobs:
             eks) echo "path=terraform/envs/dev/05-eks" >> $GITHUB_OUTPUT ;;
             karpenter) echo "path=terraform/envs/dev/06-karpenter" >> $GITHUB_OUTPUT ;;
             keda) echo "path=terraform/envs/dev/07-keda" >> $GITHUB_OUTPUT ;;
+            argocd) echo "path=terraform/envs/dev/09-argocd" >> $GITHUB_OUTPUT ;;
             monitoring) echo "path=terraform/envs/dev/10-monitoring" >> $GITHUB_OUTPUT ;;
             *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
           esac

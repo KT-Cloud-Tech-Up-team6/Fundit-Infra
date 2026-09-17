@@ -50,6 +50,8 @@ jobs:
               - 'terraform/envs/dev/06-karpenter/**'
             keda:
               - 'terraform/envs/dev/07-keda/**'
+            argocd:
+              - 'terraform/envs/dev/09-argocd/**'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
 
@@ -92,6 +94,7 @@ jobs:
             "eks:terraform/envs/dev/05-eks"
             "karpenter:terraform/envs/dev/06-karpenter"
             "keda:terraform/envs/dev/07-keda"
+            "argocd:terraform/envs/dev/09-argocd"
             "monitoring:terraform/envs/dev/10-monitoring"
           )
 

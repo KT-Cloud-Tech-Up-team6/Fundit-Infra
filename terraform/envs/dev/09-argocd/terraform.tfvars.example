@@ -1,0 +1,7 @@
+argocd_chart_version = "10.9.1"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
