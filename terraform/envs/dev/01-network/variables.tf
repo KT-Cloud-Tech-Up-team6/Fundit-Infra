@@ -35,5 +35,9 @@ variable "database_subnet_cidrs" {
 
 variable "common_tags" {
   type    = map(string)
-  default = {}
+  default = {
+    Project   = "Fundit"
+    Team      = "Team6"
+    ManagedBy = "Terraform"
+  }
 }
