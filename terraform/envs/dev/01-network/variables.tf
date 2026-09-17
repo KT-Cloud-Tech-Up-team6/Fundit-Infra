@@ -34,7 +34,7 @@ variable "database_subnet_cidrs" {
 }
 
 variable "common_tags" {
-  type    = map(string)
+  type = map(string)
   default = {
     Project   = "Fundit"
     Team      = "Team6"
