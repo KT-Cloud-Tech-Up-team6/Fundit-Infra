@@ -34,6 +34,7 @@ jobs:
               - 'terraform/envs/dev/01-network/**'
               - 'terraform/modules/vpc/**'
               - 'terraform/modules/nat-instance/**'
+              - 'terraform/modules/vpc-endpoints/**'
             storage:
               - 'terraform/envs/dev/04-storage/**'
               - 'terraform/modules/s3/**'
