@@ -1,0 +1,7 @@
+kube_prometheus_stack_chart_version = "91.4.1"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
