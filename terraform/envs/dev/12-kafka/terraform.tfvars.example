@@ -1,0 +1,9 @@
+kafka_image        = "apache/kafka:4.2.1"
+kafka_storage_size = "10Gi"
+kafka_heap_size    = "512M"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
