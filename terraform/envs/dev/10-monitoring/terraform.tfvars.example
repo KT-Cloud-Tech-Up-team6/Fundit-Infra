@@ -1,4 +1,6 @@
 kube_prometheus_stack_chart_version = "91.4.1"
+prometheus_storage_size             = "10Gi"
+prometheus_retention_size           = "8GB"
 
 common_tags = {
   Project   = "Fundit"
