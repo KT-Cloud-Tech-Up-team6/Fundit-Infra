@@ -1,0 +1,8 @@
+controller_chart_version = "1.17.1"
+replica_count            = 1
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}

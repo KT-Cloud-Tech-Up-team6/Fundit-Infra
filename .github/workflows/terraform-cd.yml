@@ -54,6 +54,9 @@ jobs:
               - 'terraform/envs/dev/09-argocd/**'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
+            lbc:
+              - 'terraform/envs/dev/11-load-balancer-controller/**'
+              - 'terraform/modules/aws-load-balancer-controller/**'
 
   apply:
     name: "Terraform Apply"
@@ -96,6 +99,7 @@ jobs:
             "keda:terraform/envs/dev/07-keda"
             "argocd:terraform/envs/dev/09-argocd"
             "monitoring:terraform/envs/dev/10-monitoring"
+            "lbc:terraform/envs/dev/11-load-balancer-controller"
           )
 
           CHANGED='${{ needs.filter.outputs.layers }}'
