@@ -23,6 +23,7 @@ Fundit 서비스가 올라갈 AWS 인프라(VPC, EKS, DB, 스토리지, CI 연�
 - 이 레포는 클러스터·네트워크·DB까지만 만든다. 애드온 컨트롤러 설치(ArgoCD, Karpenter, KEDA, CNPG 오퍼레이터)는 이 레포 소관이고, 그 컨트롤러가 참조하는 정책값은 `Fundit-GitOps` 소관이다.
 - `terraform/envs/bootstrap/`은 tfstate S3 버킷과 ECR을 만든다. dev/staging/prod가 공용으로 쓰고, 한 번만 적용한다.
 - 애플리케이션 이미지 CI의 ECR Push 전용 Role도 bootstrap에서 관리한다. [ECR CI 인증](./docs/ecr-ci-oidc.md)에 저장소별 권한과 적용·검증 절차를 정리했다.
+- bootstrap의 IAM Role 신뢰 정책을 바꿀 때는 CI Role 권한상 자동 apply가 안 된다. [bootstrap IAM 신뢰 정책 변경 절차](./docs/bootstrap-iam-trust-policy.md)에 수동 절차를 정리했다.
 - `packer/`는 dev EC2용 AMI(Docker, AWS CLI 설치됨)를 빌드한다. AMI 이름이 `fundit-dev-`로 고정되어 있어 지금은 dev 전용이다.
 
 ## 2. 아키텍처
@@ -187,3 +188,4 @@ Thumbs.db
 
 - [`docs/네이밍규약서.md`](./docs/네이밍규약서.md) 리소스 이름·태그·서비스 계약 전체
 - [`docs/ecr-ci-oidc.md`](./docs/ecr-ci-oidc.md) GitHub Actions ECR Push 인증과 협업 절차
+- [`docs/bootstrap-iam-trust-policy.md`](./docs/bootstrap-iam-trust-policy.md) bootstrap IAM 신뢰 정책 변경 수동 절차
