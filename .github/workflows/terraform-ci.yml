@@ -51,6 +51,9 @@ jobs:
               - 'terraform/envs/dev/06-karpenter/**'
             keda:
               - 'terraform/envs/dev/07-keda/**'
+            cnpg:
+              - 'terraform/envs/dev/08-cnpg/**'
+              - 'terraform/modules/cnpg/**'
             argocd:
               - 'terraform/envs/dev/09-argocd/**'
             monitoring:
@@ -84,6 +87,7 @@ jobs:
             eks) echo "path=terraform/envs/dev/05-eks" >> $GITHUB_OUTPUT ;;
             karpenter) echo "path=terraform/envs/dev/06-karpenter" >> $GITHUB_OUTPUT ;;
             keda) echo "path=terraform/envs/dev/07-keda" >> $GITHUB_OUTPUT ;;
+            cnpg) echo "path=terraform/envs/dev/08-cnpg" >> $GITHUB_OUTPUT ;;
             argocd) echo "path=terraform/envs/dev/09-argocd" >> $GITHUB_OUTPUT ;;
             monitoring) echo "path=terraform/envs/dev/10-monitoring" >> $GITHUB_OUTPUT ;;
             lbc) echo "path=terraform/envs/dev/11-load-balancer-controller" >> $GITHUB_OUTPUT ;;
