@@ -1,0 +1,143 @@
+# 1. Lambda 코드 압축 (zip)
+data "archive_file" "failover_lambda" {
+  type        = "zip"
+  source_file = "${path.module}/lambda/failover.py"
+  output_path = "${path.module}/lambda/failover.zip"
+}
+
+# 2. Lambda 실행용 IAM 역할
+resource "aws_iam_role" "failover_lambda" {
+  name = "${var.project_name}-${var.environment}-nat-failover-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-failover-role"
+    }
+  )
+}
+
+# 3. Lambda 실행 권한 (CloudWatch Logs + EC2 라우팅 교체)
+resource "aws_iam_policy" "failover_lambda" {
+  name        = "${var.project_name}-${var.environment}-nat-failover-policy"
+  description = "IAM policy for NAT instance HA failover Lambda function"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Sid    = "EC2RouteManagement"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeRouteTables",
+          "ec2:ReplaceRoute",
+          "ec2:CreateRoute"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-failover-policy"
+    }
+  )
+}
+
+resource "aws_iam_role_policy_attachment" "failover_lambda" {
+  role       = aws_iam_role.failover_lambda.name
+  policy_arn = aws_iam_policy.failover_lambda.arn
+}
+
+# 4. 페일오버 / 페일백 Lambda 함수
+resource "aws_lambda_function" "failover" {
+  filename         = data.archive_file.failover_lambda.output_path
+  function_name    = "${var.project_name}-${var.environment}-nat-failover"
+  role             = aws_iam_role.failover_lambda.arn
+  handler          = "failover.lambda_handler"
+  source_code_hash = data.archive_file.failover_lambda.output_base64sha256
+  runtime          = "python3.12"
+  timeout          = 30
+  memory_size      = 128
+
+  environment {
+    variables = {
+      ROUTE_TABLE_A_ID  = var.private_route_table_ids[0]
+      ROUTE_TABLE_C_ID  = var.private_route_table_ids[1]
+      NAT_1_ENI_ID      = aws_instance.nat[0].primary_network_interface_id
+      NAT_2_ENI_ID      = aws_instance.nat[1].primary_network_interface_id
+      NAT_1_INSTANCE_ID = aws_instance.nat[0].id
+      NAT_2_INSTANCE_ID = aws_instance.nat[1].id
+    }
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-failover"
+    }
+  )
+}
+
+# 5. CloudWatch Metric Alarm (NAT-1, NAT-2 StatusCheckFailed 감시)
+resource "aws_cloudwatch_metric_alarm" "nat_status" {
+  count               = length(aws_instance.nat)
+  alarm_name          = "${var.project_name}-${var.environment}-nat-${count.index + 1}-status-check"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "StatusCheckFailed"
+  namespace           = "AWS/EC2"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  alarm_description   = "Status check failed for NAT instance ${count.index + 1}. Triggers failover/failback."
+
+  dimensions = {
+    InstanceId = aws_instance.nat[count.index].id
+  }
+
+  alarm_actions = [aws_lambda_function.failover.arn]
+  ok_actions    = [aws_lambda_function.failover.arn]
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-${count.index + 1}-status-check"
+    }
+  )
+}
+
+# 6. CloudWatch Alarm이 Lambda 함수를 호출할 수 있도록 리소스 기반 권한 부여
+resource "aws_lambda_permission" "allow_cloudwatch_alarm" {
+  count         = length(aws_instance.nat)
+  statement_id  = "AllowExecutionFromCloudWatchAlarm-${count.index + 1}"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.failover.function_name
+  principal     = "lambda.alarms.cloudwatch.amazonaws.com"
+  source_arn    = aws_cloudwatch_metric_alarm.nat_status[count.index].arn
+}

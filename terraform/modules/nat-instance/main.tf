@@ -86,4 +86,9 @@ resource "aws_route" "private_nat" {
   route_table_id         = var.private_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
   network_interface_id   = aws_instance.nat[count.index].primary_network_interface_id
+
+  # Lambda에 의한 동적 페일오버/페일백 시 테라폼의 원복(drift) 방지
+  lifecycle {
+    ignore_changes = [network_interface_id]
+  }
 }
