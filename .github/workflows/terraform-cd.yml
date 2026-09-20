@@ -57,6 +57,8 @@ jobs:
             lbc:
               - 'terraform/envs/dev/11-load-balancer-controller/**'
               - 'terraform/modules/aws-load-balancer-controller/**'
+            kafka:
+              - 'terraform/envs/dev/12-kafka/**'
 
   apply:
     name: "Terraform Apply"
@@ -100,6 +102,7 @@ jobs:
             "argocd:terraform/envs/dev/09-argocd"
             "monitoring:terraform/envs/dev/10-monitoring"
             "lbc:terraform/envs/dev/11-load-balancer-controller"
+            "kafka:terraform/envs/dev/12-kafka"
           )
 
           CHANGED='${{ needs.filter.outputs.layers }}'
