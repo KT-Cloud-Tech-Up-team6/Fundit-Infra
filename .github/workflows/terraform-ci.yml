@@ -61,6 +61,8 @@ jobs:
             lbc:
               - 'terraform/envs/dev/11-load-balancer-controller/**'
               - 'terraform/modules/aws-load-balancer-controller/**'
+            kafka:
+              - 'terraform/envs/dev/12-kafka/**'
 
   plan:
     name: "Terraform Plan"
@@ -91,6 +93,7 @@ jobs:
             argocd) echo "path=terraform/envs/dev/09-argocd" >> $GITHUB_OUTPUT ;;
             monitoring) echo "path=terraform/envs/dev/10-monitoring" >> $GITHUB_OUTPUT ;;
             lbc) echo "path=terraform/envs/dev/11-load-balancer-controller" >> $GITHUB_OUTPUT ;;
+            kafka) echo "path=terraform/envs/dev/12-kafka" >> $GITHUB_OUTPUT ;;
             *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
           esac
 
