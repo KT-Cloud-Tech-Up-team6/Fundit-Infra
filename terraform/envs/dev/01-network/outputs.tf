@@ -31,6 +31,16 @@ output "nat_instance_ids" {
   value       = module.nat_instance.nat_instance_ids
 }
 
+output "nat_failover_lambda_arn" {
+  description = "NAT Failover 처리 Lambda 함수 ARN"
+  value       = module.nat_instance.failover_lambda_arn
+}
+
+output "nat_cloudwatch_alarm_arns" {
+  description = "NAT 인스턴스 CloudWatch Metric Alarm ARN 목록"
+  value       = module.nat_instance.nat_cloudwatch_alarm_arns
+}
+
 # ----------------------------------------------------
 # VPC Endpoints 출력값 추가
 # ----------------------------------------------------

@@ -33,3 +33,7 @@ Thumbs.db
 *.retry
 .agents/
 
+# Build and Lambda artifacts
+*.zip
+__pycache__/
+*.pyc

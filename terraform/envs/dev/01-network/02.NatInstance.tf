@@ -7,5 +7,7 @@ module "nat_instance" {
   vpc_cidr                = var.vpc_cidr
   public_subnet_ids       = module.vpc.public_subnet_ids
   private_route_table_ids = module.vpc.private_route_table_ids
+  alert_email             = var.alert_email
   tags                    = var.common_tags
 }
+

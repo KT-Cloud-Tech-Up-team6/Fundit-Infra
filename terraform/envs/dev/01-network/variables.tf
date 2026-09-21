@@ -41,3 +41,10 @@ variable "common_tags" {
     ManagedBy = "Terraform"
   }
 }
+
+variable "alert_email" {
+  description = "NAT 동시 장애 긴급 알림을 수신할 운영자 이메일 주소 (선택 사항)"
+  type        = string
+  default     = null
+}
+
