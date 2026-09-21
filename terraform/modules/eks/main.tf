@@ -179,6 +179,22 @@ resource "aws_eks_node_group" "system" {
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "vpc-cni"
+
+  # 이슈 #72: t3.medium(관리형 노드그룹)/t3a.small(Karpenter)이 ENI 보조 IP 개수로
+  # 노드당 파드 수가 17개/8개까지 묶여 있던 걸 Prefix Delegation으로 풀어준다
+  # (노드당 최대 110개까지). WARM_PREFIX_TARGET을 안 두면 기본값(WARM_ENI_TARGET 기준)이
+  # 노드당 훨씬 많은 prefix(/28, IP 16개씩)를 미리 예약해간다. 1로 지정해 노드 하나당
+  # /28 하나만 예약하게 좁힌다. 기존 노드는 재부팅해야 새 한도가 적용된다.
+  configuration_values = jsonencode({
+    env = {
+      ENABLE_PREFIX_DELEGATION = "true"
+      WARM_PREFIX_TARGET       = "1"
+    }
+  })
+
+  # configurationValues 는 지금 null(커스텀 설정 없음)이라 당장 충돌은 없지만,
+  # 콘솔/eksctl 등으로 나중에 밖에서 바뀌어도 이 설정이 항상 이기게 한다.
+  resolve_conflicts_on_update = "OVERWRITE"
 }
 
 resource "aws_eks_addon" "kube_proxy" {
