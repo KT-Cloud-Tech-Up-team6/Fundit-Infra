@@ -1,6 +1,6 @@
 # 1. 관리형 캐시 정책 조회
 data "aws_cloudfront_cache_policy" "caching_disabled" {
-  name = "Managed-CachingDisabled" # EC2 동적 API용 (캐시 OFF)
+  name = "Managed-CachingDisabled" # ALB/API 동적 요청용 (캐시 OFF)
 }
 
 data "aws_cloudfront_cache_policy" "caching_optimized" {
@@ -20,7 +20,7 @@ resource "aws_cloudfront_origin_access_control" "s3_oac" {
   signing_protocol                  = "sigv4"
 }
 
-# 3. CloudFront 배포 생성 (다중 오리진: EC2 + S3)
+# 3. CloudFront 배포 생성 (다중 오리진: ALB + S3)
 resource "aws_cloudfront_distribution" "main" {
   enabled         = true
   is_ipv6_enabled = true
@@ -29,7 +29,7 @@ resource "aws_cloudfront_distribution" "main" {
   web_acl_id      = var.web_acl_id   # WAF WebACL ARN, null이면 미연결
   aliases         = var.domain_name != null ? [var.domain_name] : []
   # ----------------------------------------------------
-  # 오리진 1: 개발용 EC2 인스턴스 (웹/API)
+  # 오리진 1: EKS Ingress ALB (웹/API)
   # ----------------------------------------------------
   origin {
     domain_name = var.app_origin_domain # 찾아갈 원본 서버 주소
@@ -37,7 +37,7 @@ resource "aws_cloudfront_distribution" "main" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only" # EC2 자체는 HTTP로 받고 CloudFront가 HTTPS 제공
+      origin_protocol_policy = "http-only" # ALB 자체는 HTTP로 받고 CloudFront가 HTTPS 제공 (SSL Offloading)
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
