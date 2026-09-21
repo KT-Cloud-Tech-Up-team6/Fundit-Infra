@@ -42,3 +42,15 @@ variable "web_acl_id" {
   type        = string
   default     = null
 }
+
+variable "domain_name" {
+  description = "CloudFront에 연결할 커스텀 도메인 이름 (예: infrastudy.store)"
+  type        = string
+  default     = null
+}
+
+variable "acm_certificate_arn" {
+  description = "CloudFront에 적용할 us-east-1 ACM 인증서 ARN"
+  type        = string
+  default     = null
+}

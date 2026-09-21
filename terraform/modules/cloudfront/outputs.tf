@@ -12,3 +12,8 @@ output "cloudfront_domain_name" {
   description = "CloudFront 도메인 주소"
   value       = aws_cloudfront_distribution.main.domain_name
 }
+
+output "cloudfront_hosted_zone_id" {
+  description = "CloudFront 배포의 Route 53 Alias용 호스팅 영역 ID"
+  value       = aws_cloudfront_distribution.main.hosted_zone_id
+}

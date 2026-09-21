@@ -20,3 +20,15 @@ variable "tags" {
   description = "리소스 태그"
   default     = {}
 }
+
+variable "cors_rules" {
+  type = list(object({
+    allowed_headers = list(string)
+    allowed_methods = list(string)
+    allowed_origins = list(string)
+    expose_headers  = optional(list(string))
+    max_age_seconds = optional(number)
+  }))
+  description = "S3 버킷 CORS 규칙 목록 (선택 사항)"
+  default     = []
+}

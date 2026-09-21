@@ -30,6 +30,7 @@ jobs:
           filters: |
             bootstrap:
               - 'terraform/envs/bootstrap/**'
+              - 'terraform/modules/ecr/**'
             network:
               - 'terraform/envs/dev/01-network/**'
               - 'terraform/modules/vpc/**'
@@ -41,14 +42,19 @@ jobs:
             gateway:
               - 'terraform/envs/dev/02-gateway/**'
               - 'terraform/modules/waf/**'
+              - 'terraform/modules/cloudfront/**'
+              - 'terraform/modules/route53-acm/**'
+              - 'terraform/modules/alb/**'
             compute:
               - 'terraform/envs/dev/03-compute/**'
               - 'terraform/modules/ec2/**'
+              - 'terraform/modules/security-groups/**'
             eks:
               - 'terraform/envs/dev/05-eks/**'
               - 'terraform/modules/eks/**'
             karpenter:
               - 'terraform/envs/dev/06-karpenter/**'
+              - 'terraform/modules/karpenter/**'
             keda:
               - 'terraform/envs/dev/07-keda/**'
             cnpg:
