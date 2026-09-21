@@ -17,6 +17,8 @@ resource "helm_release" "kube_prometheus_stack" {
   # retentionSize를 안 두면 retention(기간, 차트 기본 10d)만 보고 지우기 때문에
   # 메트릭이 늘면 10일 전에 PVC가 찰 수 있다. PVC 크기(prometheus_storage_size)의
   # 80%로 잡아 압축·WAL이 쓸 여유를 남긴다.
+  # 이슈 #86: Loki·Tempo를 Grafana에 데이터소스로 자동 연결한다. url은 같은 클러스터 안
+  # ClusterIP 주소라 고정값이고, 두 릴리스가 먼저 떠 있어야 하므로 depends_on을 둔다.
   values = [
     yamlencode({
       prometheus = {
@@ -37,6 +39,24 @@ resource "helm_release" "kube_prometheus_stack" {
           }
         }
       }
+      grafana = {
+        additionalDataSources = [
+          {
+            name   = "Loki"
+            type   = "loki"
+            url    = "http://loki.monitoring.svc.cluster.local:3100"
+            access = "proxy"
+          },
+          {
+            name   = "Tempo"
+            type   = "tempo"
+            url    = "http://tempo.monitoring.svc.cluster.local:3200"
+            access = "proxy"
+          }
+        ]
+      }
     })
   ]
+
+  depends_on = [helm_release.loki, helm_release.tempo]
 }
