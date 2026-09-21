@@ -192,8 +192,8 @@ class TestNatFailoverLambda(unittest.TestCase):
         )
         print("✅ Test 2 (Direct Invoke OK -> Failback): PASSED")
 
-    def test_dual_failure_detection_route_table_circular(self):
-        """3. 상대 라우트 테이블이 이미 내 ENI를 가리킬 때 DUAL_FAILURE_ABORTED 및 SNS 알림 검증"""
+    def test_partner_route_recovered_when_partner_healthy(self):
+        """3. 상대 라우트가 NAT-1을 가리켜도 NAT-2가 실제로 healthy라면 상대 라우트 복구 후 정상 Failover 검증"""
         event = {
             "source": "aws.cloudwatch",
             "alarmData": {
@@ -213,29 +213,42 @@ class TestNatFailoverLambda(unittest.TestCase):
             },
         }
 
-        self.mock_ec2.describe_route_tables.return_value = {
-            "RouteTables": [
-                {
-                    "Routes": [
-                        {
-                            "DestinationCidrBlock": "0.0.0.0/0",
-                            "NetworkInterfaceId": "eni-nat11111",
-                        }
-                    ]
-                }
-            ]
-        }
+        # RTB-C가 과거 failover 흔적으로 NAT-1(eni-nat11111)을 가리키고 있음
+        def mock_describe_route_tables(RouteTableIds):
+            return {
+                "RouteTables": [
+                    {
+                        "Routes": [
+                            {
+                                "DestinationCidrBlock": "0.0.0.0/0",
+                                "NetworkInterfaceId": "eni-nat11111",
+                            }
+                        ]
+                    }
+                ]
+            }
 
+        self.mock_ec2.describe_route_tables.side_effect = mock_describe_route_tables
+
+        # 상대 NAT-2는 실제로 healthy한 상태임!
         result = failover.lambda_handler(event, None)
 
-        self.assertEqual(result["statusCode"], 500)
-        self.assertEqual(result["status"], "DUAL_FAILURE_ABORTED")
-        self.mock_ec2.replace_route.assert_not_called()
-        self.mock_sns.publish.assert_called_once()
-        print("✅ Test 3 (Dual NAT Failure via Route Table Circular): PASSED")
+        self.assertEqual(result["statusCode"], 200)
+        # 상대 Route Table C 복구 + 내 Route Table A failover 둘 다 호출됨
+        self.mock_ec2.replace_route.assert_any_call(
+            RouteTableId="rtb-0ccc2222",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat22222",
+        )
+        self.mock_ec2.replace_route.assert_any_call(
+            RouteTableId="rtb-0aaa1111",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat22222",
+        )
+        print("✅ Test 3 (Partner Route Recovered & Failover when Partner Healthy): PASSED")
 
     def test_concurrent_dual_failure_race_condition(self):
-        """4. [동시 장애 레이스 컨디션] 라우트 테이블은 정상이지만 상대 인스턴스 헬스체크 실패 시 failover 중단 검증"""
+        """4. [동시 장애 레이스 컨디션] 파트너가 실제로 unhealthy(impaired)일 때만 DUAL_FAILURE_ABORTED 검증"""
         event = {
             "source": "aws.cloudwatch",
             "alarmData": {
@@ -349,16 +362,46 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.assertIn("Dual NAT Failure", call_kwargs["Subject"])
         print("✅ Test 5 (SNS Alert Publishing on Dual Failure): PASSED")
 
+    def test_ec2_running_state_deferred_when_unhealthy(self):
+        """6-1. [미준비 방지] EC2 running 이벤트 수신 시 아직 2/2 status check 미통과(unhealthy)이면 Reconcile 보류 검증"""
+        event = {
+            "source": "aws.ec2",
+            "detail-type": "EC2 Instance State-change Notification",
+            "detail": {
+                "instance-id": "i-01111111",
+                "state": "running",
+            },
+        }
+
+        # 인스턴스는 running이지만 아직 초기화 중(initializing)이라 2/2 status check가 통과되지 않음
+        self.mock_ec2.describe_instance_status.side_effect = None
+        self.mock_ec2.describe_instance_status.return_value = {
+            "InstanceStatuses": [
+                {
+                    "InstanceId": "i-01111111",
+                    "InstanceState": {"Name": "running"},
+                    "InstanceStatus": {"Status": "initializing"},
+                    "SystemStatus": {"Status": "ok"},
+                }
+            ]
+        }
+
+        result = failover.lambda_handler(event, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(result["result"]["status"], "DEFERRED")
+        self.mock_ec2.replace_route.assert_not_called()
+        print("✅ Test 6-1 (Running State Reconcile Deferred when Unhealthy): PASSED")
+
     def test_ec2_running_state_reconciliation_by_tag(self):
-        """6. [인스턴스 교체 대응] 새 인스턴스 ID가 바뀌어도 Name 태그로 인식하여 Route Reconcile 검증"""
-        # 테라폼 프로비저닝 순서와 무관하게 새 인스턴스 i-new-99999가 생성됨
+        """6-2. [인스턴스 교체 대응] 새 인스턴스가 healthy 상태이면 Name 태그로 인식하여 Route Reconcile 검증"""
         event = {
             "version": "0",
             "id": "12345678-1234-1234-1234-123456789012",
             "detail-type": "EC2 Instance State-change Notification",
             "source": "aws.ec2",
             "detail": {
-                "instance-id": "i-new-99999",  # 기존 ID가 아닌 신규 ID
+                "instance-id": "i-new-99999",
                 "state": "running",
             },
         }
@@ -395,6 +438,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                 }
             ]
         }
+
 
         result = failover.lambda_handler(event, None)
 

@@ -134,7 +134,20 @@ def handle_ec2_state_change(event):
     logger.info(f"Detected EC2 state-change for {nat_name} ({instance_id}): State='{state}'")
 
     # 1. 인스턴스 기동 시 Route Reconciliation
+    # EC2 running 직후에는 OS/fck-nat 초기화가 덜 끝났을 수 있으므로,
+    # is_instance_healthy()가 True일 때만 Reconcile하고 아직 준비 전이면 기존 failover 라우트를 유지합니다.
     if state == "running":
+        if not is_instance_healthy(instance_id):
+            logger.info(
+                f"⏳ [RECONCILIATION DEFERRED] {nat_name} ({instance_id}) is running but not yet fully healthy (booting/initializing). "
+                f"Keeping current route intact. CloudWatch OK event will restore the route once 2/2 status checks pass."
+            )
+            return {
+                "status": "DEFERRED",
+                "reason": f"{nat_name} is running but not yet healthy. Awaiting CloudWatch OK event.",
+                "instance_id": instance_id,
+            }
+
         if is_nat_1:
             target_rtb = ROUTE_TABLE_A_ID
             live_eni = get_live_instance_eni(instance_id, NAT_1_ENI_ID)
@@ -143,7 +156,7 @@ def handle_ec2_state_change(event):
             live_eni = get_live_instance_eni(instance_id, NAT_2_ENI_ID)
 
         logger.info(
-            f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) entered 'running' state. "
+            f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) is running and healthy. "
             f"Reconciling Route Table {target_rtb} to Live ENI {live_eni}..."
         )
         result = update_route(target_rtb, live_eni)
@@ -164,10 +177,10 @@ def handle_ec2_state_change(event):
         live_nat_2_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
 
         if is_nat_1:
-            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
             partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
-            if partner_current_eni == live_nat_1_eni or not partner_healthy:
-                reason = f"Partner NAT-2 is down while NAT-1 entered '{state}'"
+            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 False일 때만 반환
+            if not partner_healthy:
+                reason = f"Partner NAT-2 is unhealthy while NAT-1 entered '{state}'"
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
                 send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, NAT_2_INSTANCE_ID, reason)
                 return {
@@ -176,13 +189,22 @@ def handle_ec2_state_change(event):
                     "reason": reason,
                     "route_table_id": ROUTE_TABLE_A_ID,
                 }
+
+            # 상대 NAT-2가 살아있다면, 상대 Route가 NAT-1을 가리키고 있었더라도 먼저 상대 Route 복구 후 failover
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
+            if partner_current_eni == live_nat_1_eni:
+                logger.warning(
+                    f"Route Table C was pointing to dead NAT-1 ({live_nat_1_eni}), "
+                    f"but NAT-2 is healthy! Restoring Route Table C -> NAT-2 Live ENI ({live_nat_2_eni}) first."
+                )
+                update_route(ROUTE_TABLE_C_ID, live_nat_2_eni)
+
             res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
             return {"status": "FAILOVER_TRIGGERED", "result": res}
         else:
-            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
             partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
-            if partner_current_eni == live_nat_2_eni or not partner_healthy:
-                reason = f"Partner NAT-1 is down while NAT-2 entered '{state}'"
+            if not partner_healthy:
+                reason = f"Partner NAT-1 is unhealthy while NAT-2 entered '{state}'"
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
                 send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, NAT_1_INSTANCE_ID, reason)
                 return {
@@ -191,10 +213,20 @@ def handle_ec2_state_change(event):
                     "reason": reason,
                     "route_table_id": ROUTE_TABLE_C_ID,
                 }
+
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
+            if partner_current_eni == live_nat_2_eni:
+                logger.warning(
+                    f"Route Table A was pointing to dead NAT-2 ({live_nat_2_eni}), "
+                    f"but NAT-1 is healthy! Restoring Route Table A -> NAT-1 Live ENI ({live_nat_1_eni}) first."
+                )
+                update_route(ROUTE_TABLE_A_ID, live_nat_1_eni)
+
             res = update_route(ROUTE_TABLE_C_ID, live_nat_1_eni)
             return {"status": "FAILOVER_TRIGGERED", "result": res}
 
     return {"status": "IGNORED", "reason": f"Unhandled state '{state}'"}
+
 
 
 
@@ -404,16 +436,11 @@ def lambda_handler(event, context):
     if is_nat_1:
         if new_state == "ALARM":
             logger.info("🚨 NAT-1 FAILED: Checking partner (NAT-2) status before failover...")
-            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
             partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
 
-            # 상대방 라우팅이 이미 내 ENI를 가리키거나, 상대방 EC2 상태가 정상이 아니면 동시 장애로 판정!
-            if partner_current_eni == live_nat_1_eni or not partner_healthy:
-                reason = (
-                    f"Route Table C is already pointing to NAT-1 ({live_nat_1_eni})"
-                    if partner_current_eni == live_nat_1_eni
-                    else f"Partner NAT-2 ({NAT_2_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
-                )
+            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 false일 때만 반환
+            if not partner_healthy:
+                reason = f"Partner NAT-2 ({NAT_2_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -432,6 +459,16 @@ def lambda_handler(event, context):
                     "route_table_id": ROUTE_TABLE_A_ID,
                 }
 
+            # 상대 NAT-2가 실제로 healthy하다면:
+            # 상대 Route Table C가 죽은 NAT-1을 가리키고 있었더라도, 먼저 상대 RTB-C를 NAT-2 Live ENI로 복구!
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
+            if partner_current_eni == live_nat_1_eni:
+                logger.warning(
+                    f"Route Table C was pointing to dead NAT-1 ({live_nat_1_eni}), "
+                    f"but NAT-2 is healthy! Restoring Route Table C -> NAT-2 Live ENI ({live_nat_2_eni}) first."
+                )
+                update_route(ROUTE_TABLE_C_ID, live_nat_2_eni)
+
             logger.info("Triggering Failover for Route Table A -> NAT-2 ENI")
             res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
         elif new_state == "OK":
@@ -443,15 +480,10 @@ def lambda_handler(event, context):
     else:  # is_nat_2
         if new_state == "ALARM":
             logger.info("🚨 NAT-2 FAILED: Checking partner (NAT-1) status before failover...")
-            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
             partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
 
-            if partner_current_eni == live_nat_2_eni or not partner_healthy:
-                reason = (
-                    f"Route Table A is already pointing to NAT-2 ({live_nat_2_eni})"
-                    if partner_current_eni == live_nat_2_eni
-                    else f"Partner NAT-1 ({NAT_1_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
-                )
+            if not partner_healthy:
+                reason = f"Partner NAT-1 ({NAT_1_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -470,6 +502,14 @@ def lambda_handler(event, context):
                     "route_table_id": ROUTE_TABLE_C_ID,
                 }
 
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
+            if partner_current_eni == live_nat_2_eni:
+                logger.warning(
+                    f"Route Table A was pointing to dead NAT-2 ({live_nat_2_eni}), "
+                    f"but NAT-1 is healthy! Restoring Route Table A -> NAT-1 Live ENI ({live_nat_1_eni}) first."
+                )
+                update_route(ROUTE_TABLE_A_ID, live_nat_1_eni)
+
             logger.info("Triggering Failover for Route Table C -> NAT-1 ENI")
             res = update_route(ROUTE_TABLE_C_ID, live_nat_1_eni)
         elif new_state == "OK":
@@ -480,4 +520,5 @@ def lambda_handler(event, context):
             res = {"status": "IGNORED", "state": new_state}
 
     return {"statusCode": 200, "result": res}
+
 
