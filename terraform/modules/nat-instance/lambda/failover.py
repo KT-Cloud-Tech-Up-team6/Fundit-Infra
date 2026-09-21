@@ -8,6 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 ec2_client = boto3.client("ec2")
+sns_client = boto3.client("sns")
 
 # 환경 변수 로드
 ROUTE_TABLE_A_ID = os.environ.get("ROUTE_TABLE_A_ID")
@@ -16,6 +17,116 @@ NAT_1_ENI_ID = os.environ.get("NAT_1_ENI_ID")
 NAT_2_ENI_ID = os.environ.get("NAT_2_ENI_ID")
 NAT_1_INSTANCE_ID = os.environ.get("NAT_1_INSTANCE_ID")
 NAT_2_INSTANCE_ID = os.environ.get("NAT_2_INSTANCE_ID")
+ALERT_SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN")
+
+
+def is_instance_healthy(instance_id):
+    """
+    상대방 EC2 인스턴스의 실제 런타임 상태를 조회합니다.
+    InstanceState == 'running' 및 InstanceStatus == 'ok', SystemStatus == 'ok' 여부를 검증합니다.
+    동시 장애 시 레이스 컨디션으로 인한 상호 교차 라우팅(Cross-routing dead instances)을 방지합니다.
+    """
+    if not instance_id:
+        return False
+    try:
+        response = ec2_client.describe_instance_status(
+            InstanceIds=[instance_id], IncludeAllInstances=True
+        )
+        statuses = response.get("InstanceStatuses", [])
+        if not statuses:
+            logger.warning(f"No instance status record found for {instance_id}")
+            return False
+
+        status_data = statuses[0]
+        state = status_data.get("InstanceState", {}).get("Name")
+        if state != "running":
+            logger.warning(f"Partner instance {instance_id} state is '{state}' (not running).")
+            return False
+
+        inst_status = status_data.get("InstanceStatus", {}).get("Status")
+        sys_status = status_data.get("SystemStatus", {}).get("Status")
+
+        is_healthy = inst_status == "ok" and sys_status == "ok"
+        if not is_healthy:
+            logger.warning(
+                f"Partner instance {instance_id} check failed: InstanceStatus='{inst_status}', SystemStatus='{sys_status}'"
+            )
+        return is_healthy
+    except ClientError as e:
+        logger.error(f"Failed to describe instance status for {instance_id}: {e}")
+        return False
+
+
+def send_dual_failure_alert(route_table_id, target_instance_id, partner_instance_id, reason):
+    """
+    DUAL_FAILURE_ABORTED 발생 시 운영자 알림을 위해 SNS 토픽으로 경보 메시지를 발행합니다.
+    향후 Slack/Discord Webhook Lambda 또는 Email 구독자가 연결될 수 있는 알림 Hub 역할을 수행합니다.
+    """
+    if not ALERT_SNS_TOPIC_ARN:
+        logger.info("ALERT_SNS_TOPIC_ARN not configured. Skipping SNS alert.")
+        return
+
+    subject = "[CRITICAL] Dual NAT Failure Detected - Manual Intervention Required"
+    message = (
+        f"🚨 [CRITICAL ALERT] NAT Dual Failure Aborted\n\n"
+        f"- Target Route Table: {route_table_id}\n"
+        f"- Failing NAT Instance: {target_instance_id}\n"
+        f"- Partner NAT Instance: {partner_instance_id}\n"
+        f"- Reason: {reason}\n\n"
+        f"Automatic failover has been ABORTED to prevent routing blackhole or circular loops.\n"
+        f"Immediate operational intervention is required to inspect NAT instances and restore routing."
+    )
+
+    try:
+        logger.info(f"Publishing critical dual failure alert to SNS topic {ALERT_SNS_TOPIC_ARN}")
+        sns_client.publish(
+            TopicArn=ALERT_SNS_TOPIC_ARN,
+            Subject=subject,
+            Message=message,
+        )
+    except Exception as e:
+        logger.error(f"Failed to publish SNS dual failure alert: {e}")
+
+
+def handle_ec2_state_change(event):
+    """
+    EventBridge EC2 Instance State-change Notification을 처리하여,
+    NAT 인스턴스가 새로 생성되거나 재시작되어 'running' 상태가 되었을 때
+    담당 Private Route Table의 0.0.0.0/0 라우트를 최신 Live ENI로 자동 Reconcile합니다.
+    (ignore_changes된 route가 삭제된 구 ENI를 가리키는 블랙홀 현상 방지)
+    """
+    detail = event.get("detail", {})
+    instance_id = detail.get("instance-id")
+    state = detail.get("state")
+
+    if state != "running":
+        logger.info(f"EC2 state-change for {instance_id} is '{state}', not 'running'. Ignored.")
+        return {"status": "IGNORED", "reason": f"State '{state}' is not running"}
+
+    if instance_id == NAT_1_INSTANCE_ID:
+        target_rtb = ROUTE_TABLE_A_ID
+        live_eni = get_live_instance_eni(NAT_1_INSTANCE_ID, NAT_1_ENI_ID)
+        name = "NAT-1"
+    elif instance_id == NAT_2_INSTANCE_ID:
+        target_rtb = ROUTE_TABLE_C_ID
+        live_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
+        name = "NAT-2"
+    else:
+        logger.warning(f"Unknown instance-id {instance_id} in state-change event.")
+        return {"status": "IGNORED", "reason": "Unknown instance-id"}
+
+    logger.info(
+        f"🔄 [RECONCILIATION] {name} ({instance_id}) entered 'running' state. "
+        f"Reconciling Route Table {target_rtb} to Live ENI {live_eni}..."
+    )
+    result = update_route(target_rtb, live_eni)
+    return {
+        "status": "RECONCILED",
+        "instance_id": instance_id,
+        "route_table_id": target_rtb,
+        "eni_id": live_eni,
+        "detail": result,
+    }
 
 
 def parse_cloudwatch_event(event):
@@ -37,13 +148,11 @@ def parse_cloudwatch_event(event):
     instance_id = None
 
     # 2. CloudWatch Alarm 직접 호출 페이로드 (Direct Invoke 규격)
-    # 이벤트 경로: event["alarmData"]["state"]["value"], event["alarmData"]["alarmName"]
     if isinstance(event, dict) and "alarmData" in event:
         alarm_data = event.get("alarmData", {})
         new_state = alarm_data.get("state", {}).get("value")
         alarm_name = alarm_data.get("alarmName")
 
-        # configuration.metrics[].metricStat.metric.dimensions 에서 InstanceId 추출
         metrics = alarm_data.get("configuration", {}).get("metrics", [])
         for m in metrics:
             metric_stat = m.get("metricStat", {})
@@ -168,9 +277,21 @@ def update_route(route_table_id, target_eni_id):
 
 def lambda_handler(event, context):
     """
-    CloudWatch Alarm 이벤트를 처리하여 NAT 인스턴스 장애 시 페일오버, 정상 복구 시 페일백을 수행합니다.
+    CloudWatch Alarm 및 EventBridge 이벤트를 처리합니다.
+    - CloudWatch Alarm ALARM: NAT 인스턴스 장애 시 파트너 헬스체크 후 페일오버 (동시 장애 레이스 컨디션 방지)
+    - CloudWatch Alarm OK: NAT 정상 복구 시 페일백
+    - EventBridge EC2 state-change: NAT 신규 생성/재시작 시 최신 Live ENI로 Route Reconciliation
     """
     logger.info(f"Received event: {json.dumps(event)}")
+
+    # 0. EventBridge EC2 State-change Notification (Reconciliation) 확인
+    if (
+        isinstance(event, dict)
+        and event.get("source") == "aws.ec2"
+        and event.get("detail-type") == "EC2 Instance State-change Notification"
+    ):
+        res = handle_ec2_state_change(event)
+        return {"statusCode": 200, "result": res}
 
     # 1. 이벤트 파싱 (Direct Invoke, SNS, Legacy 모두 지원)
     new_state, alarm_name, target_instance = parse_cloudwatch_event(event)
@@ -211,27 +332,34 @@ def lambda_handler(event, context):
     live_nat_2_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
 
     # 4. 상태별 페일오버 및 페일백 분기
-    # - NAT-1 장애 (ALARM): AZ-a 라우팅 -> NAT-2 ENI로 변경 (Failover)
-    # - NAT-1 복구 (OK):    AZ-a 라우팅 -> NAT-1 ENI로 복원 (Failback)
-    # - NAT-2 장애 (ALARM): AZ-c 라우팅 -> NAT-1 ENI로 변경 (Failover)
-    # - NAT-2 복구 (OK):    AZ-c 라우팅 -> NAT-2 ENI로 복원 (Failback)
-
     if is_nat_1:
         if new_state == "ALARM":
             logger.info("🚨 NAT-1 FAILED: Checking partner (NAT-2) status before failover...")
             partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
-            # 상대방 라우팅이 이미 내 ENI를 가리키고 있다면, 상대방도 이미 다운된 상태임
-            if partner_current_eni == live_nat_1_eni:
+            partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
+
+            # 상대방 라우팅이 이미 내 ENI를 가리키거나, 상대방 EC2 상태가 정상이 아니면 동시 장애로 판정!
+            if partner_current_eni == live_nat_1_eni or not partner_healthy:
+                reason = (
+                    f"Route Table C is already pointing to NAT-1 ({live_nat_1_eni})"
+                    if partner_current_eni == live_nat_1_eni
+                    else f"Partner NAT-2 ({NAT_2_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
+                )
                 logger.critical(
-                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! "
-                    f"Route Table C is already pointing to NAT-1 ({live_nat_1_eni}), indicating NAT-2 is DOWN. "
-                    f"Now NAT-1 is also FAILING. Both NAT instances are DOWN! "
+                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
+                    f"Both NAT instances are DOWN! "
                     f"Aborting failover to dead instance to avoid circular routing. Manual intervention required!"
+                )
+                send_dual_failure_alert(
+                    route_table_id=ROUTE_TABLE_A_ID,
+                    target_instance_id=NAT_1_INSTANCE_ID,
+                    partner_instance_id=NAT_2_INSTANCE_ID,
+                    reason=reason,
                 )
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
-                    "reason": "Both NAT instances are down. Failover skipped to prevent circular routing.",
+                    "reason": f"Both NAT instances are down ({reason}). Failover skipped to prevent circular routing.",
                     "route_table_id": ROUTE_TABLE_A_ID,
                 }
 
@@ -247,17 +375,29 @@ def lambda_handler(event, context):
         if new_state == "ALARM":
             logger.info("🚨 NAT-2 FAILED: Checking partner (NAT-1) status before failover...")
             partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
-            if partner_current_eni == live_nat_2_eni:
+            partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
+
+            if partner_current_eni == live_nat_2_eni or not partner_healthy:
+                reason = (
+                    f"Route Table A is already pointing to NAT-2 ({live_nat_2_eni})"
+                    if partner_current_eni == live_nat_2_eni
+                    else f"Partner NAT-1 ({NAT_1_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
+                )
                 logger.critical(
-                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! "
-                    f"Route Table A is already pointing to NAT-2 ({live_nat_2_eni}), indicating NAT-1 is DOWN. "
-                    f"Now NAT-2 is also FAILING. Both NAT instances are DOWN! "
+                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
+                    f"Both NAT instances are DOWN! "
                     f"Aborting failover to dead instance to avoid circular routing. Manual intervention required!"
+                )
+                send_dual_failure_alert(
+                    route_table_id=ROUTE_TABLE_C_ID,
+                    target_instance_id=NAT_2_INSTANCE_ID,
+                    partner_instance_id=NAT_1_INSTANCE_ID,
+                    reason=reason,
                 )
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
-                    "reason": "Both NAT instances are down. Failover skipped to prevent circular routing.",
+                    "reason": f"Both NAT instances are down ({reason}). Failover skipped to prevent circular routing.",
                     "route_table_id": ROUTE_TABLE_C_ID,
                 }
 
@@ -271,3 +411,4 @@ def lambda_handler(event, context):
             res = {"status": "IGNORED", "state": new_state}
 
     return {"statusCode": 200, "result": res}
+

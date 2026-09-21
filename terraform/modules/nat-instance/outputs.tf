@@ -32,3 +32,9 @@ output "nat_cloudwatch_alarm_arns" {
   description = "NAT 인스턴스 CloudWatch Metric Alarm ARN 목록"
   value       = aws_cloudwatch_metric_alarm.nat_status[*].arn
 }
+
+output "failover_alert_sns_topic_arn" {
+  description = "NAT 동시 장애 발생 시 긴급 알림을 발행하는 SNS 토픽 ARN (Slack/Discord/Email 등 연결용)"
+  value       = aws_sns_topic.failover_alerts.arn
+}
+

@@ -57,7 +57,8 @@ resource "aws_iam_policy" "failover_lambda" {
         Effect = "Allow"
         Action = [
           "ec2:DescribeRouteTables",
-          "ec2:DescribeInstances"
+          "ec2:DescribeInstances",
+          "ec2:DescribeInstanceStatus"
         ]
         Resource = "*"
       },
@@ -72,6 +73,14 @@ resource "aws_iam_policy" "failover_lambda" {
           for rtb_id in var.private_route_table_ids :
           "arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:route-table/${rtb_id}"
         ]
+      },
+      {
+        Sid    = "SNSPublishAlerts"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.failover_alerts.arn
       }
     ]
   })
@@ -102,12 +111,13 @@ resource "aws_lambda_function" "failover" {
 
   environment {
     variables = {
-      ROUTE_TABLE_A_ID  = var.private_route_table_ids[0]
-      ROUTE_TABLE_C_ID  = var.private_route_table_ids[1]
-      NAT_1_ENI_ID      = aws_instance.nat[0].primary_network_interface_id
-      NAT_2_ENI_ID      = aws_instance.nat[1].primary_network_interface_id
-      NAT_1_INSTANCE_ID = aws_instance.nat[0].id
-      NAT_2_INSTANCE_ID = aws_instance.nat[1].id
+      ROUTE_TABLE_A_ID    = var.private_route_table_ids[0]
+      ROUTE_TABLE_C_ID    = var.private_route_table_ids[1]
+      NAT_1_ENI_ID        = aws_instance.nat[0].primary_network_interface_id
+      NAT_2_ENI_ID        = aws_instance.nat[1].primary_network_interface_id
+      NAT_1_INSTANCE_ID   = aws_instance.nat[0].id
+      NAT_2_INSTANCE_ID   = aws_instance.nat[1].id
+      ALERT_SNS_TOPIC_ARN = aws_sns_topic.failover_alerts.arn
     }
   }
 
@@ -156,3 +166,54 @@ resource "aws_lambda_permission" "allow_cloudwatch_alarm" {
   principal     = "lambda.alarms.cloudwatch.amazonaws.com"
   source_arn    = aws_cloudwatch_metric_alarm.nat_status[count.index].arn
 }
+
+# 7. DUAL_FAILURE_ABORTED 등 치명적 장애 알림용 SNS 토픽
+# (운영자 이메일, Slack Chatbot, Discord Webhook Lambda 등 향후 구독자를 연결할 수 있는 알림 Hub)
+resource "aws_sns_topic" "failover_alerts" {
+  name = "${var.project_name}-${var.environment}-nat-failover-alerts"
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-failover-alerts"
+    }
+  )
+}
+
+# 8. EventBridge: NAT 인스턴스 running 상태 감지 (인스턴스 교체 시 Route Reconciliation)
+# ignore_changes된 route가 삭제된 구 ENI를 가리키는 블랙홀 방지를 위해 새 인스턴스 기동 시 자동 보정
+resource "aws_cloudwatch_event_rule" "nat_instance_state" {
+  name        = "${var.project_name}-${var.environment}-nat-instance-state"
+  description = "Triggers NAT failover Lambda for route reconciliation when a NAT instance enters running state"
+
+  event_pattern = jsonencode({
+    source      = ["aws.ec2"]
+    detail-type = ["EC2 Instance State-change Notification"]
+    detail = {
+      state       = ["running"]
+      instance-id = aws_instance.nat[*].id
+    }
+  })
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-instance-state"
+    }
+  )
+}
+
+resource "aws_cloudwatch_event_target" "lambda_reconcile" {
+  rule      = aws_cloudwatch_event_rule.nat_instance_state.name
+  target_id = "NatFailoverLambdaReconcile"
+  arn       = aws_lambda_function.failover.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  statement_id  = "AllowExecutionFromEventBridgeStateChange"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.failover.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.nat_instance_state.arn
+}
+
