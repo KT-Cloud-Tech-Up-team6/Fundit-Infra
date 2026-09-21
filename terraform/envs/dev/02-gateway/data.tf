@@ -25,3 +25,11 @@ data "aws_route53_zone" "existing" {
   name         = "${var.domain_name}."
   private_zone = false
 }
+
+# 4. EKS Ingress Controller가 프로비저닝한 ALB 조회
+data "aws_lb" "eks_alb" {
+  tags = {
+    "elbv2.k8s.aws/cluster" = "${var.project_name}-${var.environment}-eks"
+    "ingress.k8s.aws/stack" = "${var.project_name}-alb"
+  }
+}

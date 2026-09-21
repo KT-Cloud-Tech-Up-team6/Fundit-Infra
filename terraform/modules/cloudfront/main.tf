@@ -27,6 +27,7 @@ resource "aws_cloudfront_distribution" "main" {
   comment         = "${var.project_name} ${var.environment} CloudFront CDN"
   price_class     = "PriceClass_200" # 한국, 아시아, 북미, 유럽 엣지 포함
   web_acl_id      = var.web_acl_id   # WAF WebACL ARN, null이면 미연결
+  aliases         = var.domain_name != null ? [var.domain_name] : []
   # ----------------------------------------------------
   # 오리진 1: 개발용 EC2 인스턴스 (웹/API)
   # ----------------------------------------------------
@@ -78,9 +79,12 @@ resource "aws_cloudfront_distribution" "main" {
       restriction_type = "none"
     }
   }
-  # CloudFront 기본 무료 SSL 인증서 (*.cloudfront.net)
+  # SSL 인증서 (커스텀 도메인 ACM 인증서 우선, 미지정 시 CloudFront 기본 인증서)
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = var.acm_certificate_arn == null
+    acm_certificate_arn            = var.acm_certificate_arn
+    ssl_support_method             = var.acm_certificate_arn != null ? "sni-only" : null
+    minimum_protocol_version       = var.acm_certificate_arn != null ? "TLSv1.2_2021" : null
   }
   tags = merge(
     var.tags,
