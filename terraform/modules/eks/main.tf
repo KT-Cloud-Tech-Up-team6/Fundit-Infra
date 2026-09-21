@@ -179,6 +179,16 @@ resource "aws_eks_node_group" "system" {
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "vpc-cni"
+
+  # 현재 서브넷에서 연속된 /28 블록을 보장할 수 없어 Prefix Delegation을 비활성화한다.
+  configuration_values = jsonencode({
+    env = {
+      ENABLE_PREFIX_DELEGATION = "false"
+    }
+  })
+
+  # 콘솔/eksctl 등으로 밖에서 바뀌어도 이 설정이 항상 이기게 한다.
+  resolve_conflicts_on_update = "OVERWRITE"
 }
 
 resource "aws_eks_addon" "kube_proxy" {
