@@ -24,4 +24,17 @@ module "media_bucket" {
   enable_versioning = true
   prevent_destroy   = true
   tags              = var.common_tags
+
+  cors_rules = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET", "PUT", "POST", "HEAD"]
+      allowed_origins = [
+        "https://infrastudy.store",
+        "http://localhost:3000"
+      ]
+      expose_headers  = ["ETag"]
+      max_age_seconds = 3000
+    }
+  ]
 }
