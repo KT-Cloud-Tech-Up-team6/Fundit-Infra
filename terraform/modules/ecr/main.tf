@@ -24,45 +24,5 @@ resource "aws_ecr_repository" "this" {
   tags = var.tags
 }
 
-# ==============================================================================
-# 2. ECR 수명 주기 정책 (Lifecycle Policy)
-#    - 릴리즈 태그(v*, release*): 규칙에 넣지 않아 영구 보존 (삭제 절대 안 됨!)
-#    - 커밋/개발 태그(sha-*, dev-*, commit-*): 최신 10개만 유지하고 오래된 것 자동 삭제
-#    - 태그 없는 찌꺼기 이미지: 1일 뒤 자동 삭제
-# ==============================================================================
-resource "aws_ecr_lifecycle_policy" "this" {
-  for_each   = aws_ecr_repository.this
-  repository = each.value.name
-  policy = jsonencode({
-    rules = [
-      # 1순위: 빌드가 덮어씌워져 태그가 떨어진 불필요한 이미지는 1일 뒤 즉시 삭제
-      {
-        rulePriority = 1
-        description  = "태그 없는 이미지는 1일 후 자동 삭제"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = 1
-        }
-        action = {
-          type = "expire"
-        }
-      },
-      # 2순위: 깃 커밋 및 개발용 임시 태그는 최신 10개만 보관하고 이전 것은 자동 청소
-      {
-        rulePriority = 2
-        description  = "커밋 태그(sha-*, dev-*, commit-*)는 최신 10개만 유지"
-        selection = {
-          tagStatus     = "tagged"
-          tagPrefixList = ["sha-", "dev-", "commit-"]
-          countType     = "imageCountMoreThan"
-          countNumber   = var.max_image_count
-        }
-        action = {
-          type = "expire"
-        }
-      }
-    ]
-  })
-}
+# 수명 주기 정책(Lifecycle Policy) 제거:
+# 단일 ECR(fundit-backend) 내 여러 마이크로서비스 이미지 공존 시 10개 제한에 따른 이미지 증발 방지
