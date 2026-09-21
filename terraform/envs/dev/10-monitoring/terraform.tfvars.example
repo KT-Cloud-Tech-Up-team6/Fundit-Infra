@@ -1,6 +1,11 @@
 kube_prometheus_stack_chart_version = "91.4.1"
 prometheus_storage_size             = "10Gi"
 prometheus_retention_size           = "8GB"
+loki_chart_version                  = "7.3.0"
+loki_storage_size                   = "20Gi"
+tempo_chart_version                 = "1.24.4"
+tempo_storage_size                  = "15Gi"
+fluent_bit_chart_version            = "0.58.2"
 
 common_tags = {
   Project   = "Fundit"
