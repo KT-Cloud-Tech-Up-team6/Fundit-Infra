@@ -35,7 +35,6 @@ jobs:
               - 'terraform/modules/vpc/**'
               - 'terraform/modules/nat-instance/**'
               - 'terraform/modules/vpc-endpoints/**'
-              - 'terraform/modules/security-groups/**'
             storage:
               - 'terraform/envs/dev/04-storage/**'
               - 'terraform/modules/s3/**'
@@ -48,6 +47,7 @@ jobs:
             compute:
               - 'terraform/envs/dev/03-compute/**'
               - 'terraform/modules/ec2/**'
+              - 'terraform/modules/security-groups/**'
             eks:
               - 'terraform/envs/dev/05-eks/**'
               - 'terraform/modules/eks/**'
