@@ -27,6 +27,9 @@ data "aws_route53_zone" "existing" {
 }
 
 # 4. EKS Ingress Controller가 프로비저닝한 ALB 조회
+# [배포 순서 의존성 (Prerequisite)]
+# 본 데이터 소스는 Terraform이 아닌 GitOps(EKS Ingress / AWS Load Balancer Controller)에 의해
+# ALB가 먼저 생성되어 있어야 정상 동작합니다. 미생성 시 data 소스 조회 에러가 발생합니다.
 data "aws_lb" "eks_alb" {
   tags = {
     "elbv2.k8s.aws/cluster" = "${var.project_name}-${var.environment}-eks"
