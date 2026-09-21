@@ -139,8 +139,19 @@ def lambda_handler(event, context):
 
     if is_nat_1:
         if new_state == "ALARM":
-            logger.info("🚨 NAT-1 FAILED: Triggering Failover for Route Table A -> NAT-2 ENI")
+            logger.info("🚨 NAT-1 FAILED: Checking partner (NAT-2) status before failover...")
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
+            if partner_current_eni == NAT_1_ENI_ID:
+                logger.critical(
+                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! "
+                    f"Route Table C is already pointing to NAT-1 ({NAT_1_ENI_ID}). "
+                    f"Both NAT instances ({NAT_1_INSTANCE_ID}, {NAT_2_INSTANCE_ID}) appear to be DOWN. "
+                    f"Outbound internet connectivity is degraded. Manual recovery or ASG self-healing required."
+                )
+            logger.info("Triggering Failover for Route Table A -> NAT-2 ENI")
             res = update_route(ROUTE_TABLE_A_ID, NAT_2_ENI_ID)
+            if partner_current_eni == NAT_1_ENI_ID:
+                res["dual_failure_warning"] = True
         elif new_state == "OK":
             logger.info("✅ NAT-1 RECOVERED: Triggering Failback for Route Table A -> NAT-1 ENI")
             res = update_route(ROUTE_TABLE_A_ID, NAT_1_ENI_ID)
@@ -149,8 +160,19 @@ def lambda_handler(event, context):
             res = {"status": "IGNORED", "state": new_state}
     else:  # is_nat_2
         if new_state == "ALARM":
-            logger.info("🚨 NAT-2 FAILED: Triggering Failover for Route Table C -> NAT-1 ENI")
+            logger.info("🚨 NAT-2 FAILED: Checking partner (NAT-1) status before failover...")
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
+            if partner_current_eni == NAT_2_ENI_ID:
+                logger.critical(
+                    f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! "
+                    f"Route Table A is already pointing to NAT-2 ({NAT_2_ENI_ID}). "
+                    f"Both NAT instances ({NAT_1_INSTANCE_ID}, {NAT_2_INSTANCE_ID}) appear to be DOWN. "
+                    f"Outbound internet connectivity is degraded. Manual recovery or ASG self-healing required."
+                )
+            logger.info("Triggering Failover for Route Table C -> NAT-1 ENI")
             res = update_route(ROUTE_TABLE_C_ID, NAT_1_ENI_ID)
+            if partner_current_eni == NAT_2_ENI_ID:
+                res["dual_failure_warning"] = True
         elif new_state == "OK":
             logger.info("✅ NAT-2 RECOVERED: Triggering Failback for Route Table C -> NAT-2 ENI")
             res = update_route(ROUTE_TABLE_C_ID, NAT_2_ENI_ID)

@@ -1,3 +1,7 @@
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 # 1. Lambda 코드 압축 (zip)
 data "archive_file" "failover_lambda" {
   type        = "zip"
@@ -46,17 +50,27 @@ resource "aws_iam_policy" "failover_lambda" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:*:*:*"
+        Resource = "arn:${data.aws_partition.current.partition}:logs:*:*:*"
+      },
+      {
+        Sid    = "EC2RouteDescribe"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeRouteTables"
+        ]
+        Resource = "*"
       },
       {
         Sid    = "EC2RouteManagement"
         Effect = "Allow"
         Action = [
-          "ec2:DescribeRouteTables",
           "ec2:ReplaceRoute",
           "ec2:CreateRoute"
         ]
-        Resource = "*"
+        Resource = [
+          for rtb_id in var.private_route_table_ids :
+          "arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:route-table/${rtb_id}"
+        ]
       }
     ]
   })
