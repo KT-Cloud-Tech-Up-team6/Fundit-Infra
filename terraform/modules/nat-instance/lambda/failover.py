@@ -17,7 +17,27 @@ NAT_1_ENI_ID = os.environ.get("NAT_1_ENI_ID")
 NAT_2_ENI_ID = os.environ.get("NAT_2_ENI_ID")
 NAT_1_INSTANCE_ID = os.environ.get("NAT_1_INSTANCE_ID")
 NAT_2_INSTANCE_ID = os.environ.get("NAT_2_INSTANCE_ID")
+NAT_1_TAG_NAME = os.environ.get("NAT_1_TAG_NAME", "fundit-dev-nat-1")
+NAT_2_TAG_NAME = os.environ.get("NAT_2_TAG_NAME", "fundit-dev-nat-2")
 ALERT_SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN")
+
+
+def get_instance_name_tag(instance_id):
+    """인스턴스의 Name 태그 값을 조회합니다."""
+    if not instance_id:
+        return None
+    try:
+        resp = ec2_client.describe_instances(InstanceIds=[instance_id])
+        reservations = resp.get("Reservations", [])
+        if reservations and reservations[0].get("Instances"):
+            tags = reservations[0]["Instances"][0].get("Tags", [])
+            for t in tags:
+                if t.get("Key") == "Name":
+                    return t.get("Value")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to fetch tags for {instance_id}: {e}")
+        return None
 
 
 def is_instance_healthy(instance_id):
@@ -90,43 +110,92 @@ def send_dual_failure_alert(route_table_id, target_instance_id, partner_instance
 
 def handle_ec2_state_change(event):
     """
-    EventBridge EC2 Instance State-change Notification을 처리하여,
-    NAT 인스턴스가 새로 생성되거나 재시작되어 'running' 상태가 되었을 때
-    담당 Private Route Table의 0.0.0.0/0 라우트를 최신 Live ENI로 자동 Reconcile합니다.
-    (ignore_changes된 route가 삭제된 구 ENI를 가리키는 블랙홀 현상 방지)
+    EventBridge EC2 Instance State-change Notification을 처리합니다.
+    - 테라폼 프로비저닝 순서 레이스 컨디션을 방지하기 위해 Name 태그(fundit-dev-nat-*)로 대상을 동적 판별합니다.
+    - state == 'running': 인스턴스 신규 생성/재시작 시 최신 Live ENI로 담당 Route Table 자동 Reconcile
+    - state in ['stopped', 'shutting-down', 'terminated']: 인스턴스 중지 시 즉각 Failover 트리거
     """
     detail = event.get("detail", {})
     instance_id = detail.get("instance-id")
     state = detail.get("state")
 
-    if state != "running":
-        logger.info(f"EC2 state-change for {instance_id} is '{state}', not 'running'. Ignored.")
-        return {"status": "IGNORED", "reason": f"State '{state}' is not running"}
+    # Name 태그 및 Instance ID 매칭으로 NAT 인스턴스 판별
+    name_tag = get_instance_name_tag(instance_id)
+    is_nat_1 = (name_tag == NAT_1_TAG_NAME) or (instance_id == NAT_1_INSTANCE_ID)
+    is_nat_2 = (name_tag == NAT_2_TAG_NAME) or (instance_id == NAT_2_INSTANCE_ID)
 
-    if instance_id == NAT_1_INSTANCE_ID:
-        target_rtb = ROUTE_TABLE_A_ID
-        live_eni = get_live_instance_eni(NAT_1_INSTANCE_ID, NAT_1_ENI_ID)
-        name = "NAT-1"
-    elif instance_id == NAT_2_INSTANCE_ID:
-        target_rtb = ROUTE_TABLE_C_ID
-        live_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
-        name = "NAT-2"
-    else:
-        logger.warning(f"Unknown instance-id {instance_id} in state-change event.")
-        return {"status": "IGNORED", "reason": "Unknown instance-id"}
+    if not is_nat_1 and not is_nat_2:
+        logger.info(
+            f"EC2 state-change: Instance {instance_id} (Name='{name_tag}') is not a managed NAT instance. Ignored."
+        )
+        return {"status": "IGNORED", "reason": "Not a managed NAT instance"}
 
-    logger.info(
-        f"🔄 [RECONCILIATION] {name} ({instance_id}) entered 'running' state. "
-        f"Reconciling Route Table {target_rtb} to Live ENI {live_eni}..."
-    )
-    result = update_route(target_rtb, live_eni)
-    return {
-        "status": "RECONCILED",
-        "instance_id": instance_id,
-        "route_table_id": target_rtb,
-        "eni_id": live_eni,
-        "detail": result,
-    }
+    nat_name = "NAT-1" if is_nat_1 else "NAT-2"
+    logger.info(f"Detected EC2 state-change for {nat_name} ({instance_id}): State='{state}'")
+
+    # 1. 인스턴스 기동 시 Route Reconciliation
+    if state == "running":
+        if is_nat_1:
+            target_rtb = ROUTE_TABLE_A_ID
+            live_eni = get_live_instance_eni(instance_id, NAT_1_ENI_ID)
+        else:
+            target_rtb = ROUTE_TABLE_C_ID
+            live_eni = get_live_instance_eni(instance_id, NAT_2_ENI_ID)
+
+        logger.info(
+            f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) entered 'running' state. "
+            f"Reconciling Route Table {target_rtb} to Live ENI {live_eni}..."
+        )
+        result = update_route(target_rtb, live_eni)
+        return {
+            "status": "RECONCILED",
+            "instance_id": instance_id,
+            "route_table_id": target_rtb,
+            "eni_id": live_eni,
+            "detail": result,
+        }
+
+    # 2. 인스턴스 중지/종료 시 즉각 Failover
+    elif state in ["stopped", "shutting-down", "terminated"]:
+        logger.warning(
+            f"🚨 [FAST FAILOVER] {nat_name} ({instance_id}) entered '{state}' state. Triggering failover..."
+        )
+        live_nat_1_eni = get_live_instance_eni(NAT_1_INSTANCE_ID, NAT_1_ENI_ID)
+        live_nat_2_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
+
+        if is_nat_1:
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_C_ID)
+            partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
+            if partner_current_eni == live_nat_1_eni or not partner_healthy:
+                reason = f"Partner NAT-2 is down while NAT-1 entered '{state}'"
+                logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
+                send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, NAT_2_INSTANCE_ID, reason)
+                return {
+                    "statusCode": 500,
+                    "status": "DUAL_FAILURE_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_A_ID,
+                }
+            res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
+            return {"status": "FAILOVER_TRIGGERED", "result": res}
+        else:
+            partner_current_eni = get_current_nat_eni(ROUTE_TABLE_A_ID)
+            partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
+            if partner_current_eni == live_nat_2_eni or not partner_healthy:
+                reason = f"Partner NAT-1 is down while NAT-2 entered '{state}'"
+                logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
+                send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, NAT_1_INSTANCE_ID, reason)
+                return {
+                    "statusCode": 500,
+                    "status": "DUAL_FAILURE_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_C_ID,
+                }
+            res = update_route(ROUTE_TABLE_C_ID, live_nat_1_eni)
+            return {"status": "FAILOVER_TRIGGERED", "result": res}
+
+    return {"status": "IGNORED", "reason": f"Unhandled state '{state}'"}
+
 
 
 def parse_cloudwatch_event(event):

@@ -117,6 +117,8 @@ resource "aws_lambda_function" "failover" {
       NAT_2_ENI_ID        = aws_instance.nat[1].primary_network_interface_id
       NAT_1_INSTANCE_ID   = aws_instance.nat[0].id
       NAT_2_INSTANCE_ID   = aws_instance.nat[1].id
+      NAT_1_TAG_NAME      = "${var.project_name}-${var.environment}-nat-1"
+      NAT_2_TAG_NAME      = "${var.project_name}-${var.environment}-nat-2"
       ALERT_SNS_TOPIC_ARN = aws_sns_topic.failover_alerts.arn
     }
   }
@@ -141,6 +143,9 @@ resource "aws_cloudwatch_metric_alarm" "nat_status" {
   statistic           = "Maximum"
   threshold           = 0
   alarm_description   = "Status check failed for NAT instance ${count.index + 1}. Triggers failover/failback."
+
+  # NAT 인스턴스 중지(stopped) 등으로 지표 수집이 중단될 때 INSUFFICIENT_DATA로 방치되지 않고 ALARM으로 처리
+  treat_missing_data = "breaching"
 
   dimensions = {
     InstanceId = aws_instance.nat[count.index].id
@@ -180,18 +185,26 @@ resource "aws_sns_topic" "failover_alerts" {
   )
 }
 
-# 8. EventBridge: NAT 인스턴스 running 상태 감지 (인스턴스 교체 시 Route Reconciliation)
-# ignore_changes된 route가 삭제된 구 ENI를 가리키는 블랙홀 방지를 위해 새 인스턴스 기동 시 자동 보정
+# 7-1. 운영자 이메일 긴급 알림 구독 (선택 사항, Slack/Discord 웹훅 연동 전 임시/백업용)
+resource "aws_sns_topic_subscription" "email_alert" {
+  count     = var.alert_email != null ? 1 : 0
+  topic_arn = aws_sns_topic.failover_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# 8. EventBridge: NAT 인스턴스 상태 감지 (인스턴스 교체 시 Route Reconciliation 및 즉각 Failover)
+# 테라폼 프로비저닝 순서 레이스 컨디션을 방지하기 위해 instance-id 필터를 제거하고,
+# Lambda 내부에서 Name 태그(fundit-dev-nat-*)로 대상을 판별합니다.
 resource "aws_cloudwatch_event_rule" "nat_instance_state" {
   name        = "${var.project_name}-${var.environment}-nat-instance-state"
-  description = "Triggers NAT failover Lambda for route reconciliation when a NAT instance enters running state"
+  description = "Triggers NAT failover Lambda for route reconciliation (running) and fast failover (stopped/terminated)"
 
   event_pattern = jsonencode({
     source      = ["aws.ec2"]
     detail-type = ["EC2 Instance State-change Notification"]
     detail = {
-      state       = ["running"]
-      instance-id = aws_instance.nat[*].id
+      state = ["running", "stopped", "shutting-down", "terminated"]
     }
   })
 
@@ -216,4 +229,5 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.nat_instance_state.arn
 }
+
 

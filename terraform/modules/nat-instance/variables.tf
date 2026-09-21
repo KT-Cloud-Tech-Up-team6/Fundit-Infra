@@ -52,3 +52,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "alert_email" {
+  description = "NAT 동시 장애 발생 시 긴급 알림을 수신할 운영자 이메일 (선택 사항, Slack/Discord 연동 전 임시/백업용)"
+  type        = string
+  default     = null
+}
+
