@@ -56,7 +56,8 @@ resource "aws_iam_policy" "failover_lambda" {
         Sid    = "EC2RouteDescribe"
         Effect = "Allow"
         Action = [
-          "ec2:DescribeRouteTables"
+          "ec2:DescribeRouteTables",
+          "ec2:DescribeInstances"
         ]
         Resource = "*"
       },

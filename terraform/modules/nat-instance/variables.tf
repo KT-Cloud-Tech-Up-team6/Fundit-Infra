@@ -24,11 +24,21 @@ variable "vpc_cidr" {
 variable "public_subnet_ids" {
   description = "NAT 인스턴스를 배치할 퍼블릭 서브넷 ID 목록 (2AZ HA 구성용)"
   type        = list(string)
+
+  validation {
+    condition     = length(var.public_subnet_ids) == 2
+    error_message = "public_subnet_ids must contain exactly 2 subnet IDs for 2-AZ HA deployment."
+  }
 }
 
 variable "private_route_table_ids" {
   description = "0.0.0.0/0 기본 라우트를 추가할 프라이빗 라우팅 테이블 ID 목록"
   type        = list(string)
+
+  validation {
+    condition     = length(var.private_route_table_ids) == 2
+    error_message = "private_route_table_ids must contain exactly 2 route table IDs for 2-AZ HA deployment."
+  }
 }
 
 variable "instance_type" {
