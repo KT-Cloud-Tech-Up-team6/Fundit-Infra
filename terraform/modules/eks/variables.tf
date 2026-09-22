@@ -55,3 +55,36 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ====================================================
+# Stateful 전용 노드그룹 변수 (이슈 #71)
+# ====================================================
+variable "enable_stateful_node_group" {
+  description = "Stateful 전용 노드 그룹 생성 여부"
+  type        = bool
+  default     = true
+}
+
+variable "stateful_instance_types" {
+  description = "Stateful 노드 인스턴스 유형 (t3a.large 권장, t3.large fallback)"
+  type        = list(string)
+  default     = ["t3a.large", "t3.large"]
+}
+
+variable "stateful_desired_size_per_az" {
+  description = "AZ당 Stateful 노드 기본 수"
+  type        = number
+  default     = 1
+}
+
+variable "stateful_min_size_per_az" {
+  description = "AZ당 Stateful 노드 최소 수"
+  type        = number
+  default     = 1
+}
+
+variable "stateful_max_size_per_az" {
+  description = "AZ당 Stateful 노드 최대 수"
+  type        = number
+  default     = 2
+}
