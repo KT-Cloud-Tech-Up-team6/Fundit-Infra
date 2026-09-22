@@ -30,7 +30,7 @@ variable "ecr_repository_names" {
   type        = list(string)
   description = "생성할 ECR 리포지토리 이름 목록"
   default = [
-    "fundit-backend", "fundit-frontend", "fundit-postgres",
+    "fundit-backend", "fundit-frontend",
     "fundit-gateway", "fundit-auth", "fundit-member",
     "fundit-payment", "fundit-order", "fundit-funding",
     "fundit-project", "fundit-search", "fundit-fulfillment",
