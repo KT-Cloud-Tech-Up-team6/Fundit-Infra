@@ -13,5 +13,11 @@ variable "backend_service_account_name" {
 variable "common_tags" {
   description = "공통 태그"
   type        = map(string)
-  default     = {}
+  # tfvars는 gitignore 대상이라 CI/CD apply는 항상 이 기본값을 쓴다.
+  # 빈 맵으로 두면 CI가 만드는 리소스에 비용 태그가 하나도 안 붙는다.
+  default = {
+    Project   = "Fundit"
+    Team      = "Team6"
+    ManagedBy = "Terraform"
+  }
 }

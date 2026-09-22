@@ -69,6 +69,8 @@ jobs:
               - 'terraform/modules/aws-load-balancer-controller/**'
             kafka:
               - 'terraform/envs/dev/12-kafka/**'
+            irsa_backend:
+              - 'terraform/envs/dev/14-irsa-backend/**'
 
   apply:
     name: "Terraform Apply"
@@ -114,6 +116,7 @@ jobs:
             "monitoring:terraform/envs/dev/10-monitoring"
             "lbc:terraform/envs/dev/11-load-balancer-controller"
             "kafka:terraform/envs/dev/12-kafka"
+            "irsa_backend:terraform/envs/dev/14-irsa-backend"
           )
 
           CHANGED='${{ needs.filter.outputs.layers }}'

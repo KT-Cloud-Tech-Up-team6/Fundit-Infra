@@ -69,6 +69,8 @@ jobs:
               - 'terraform/modules/aws-load-balancer-controller/**'
             kafka:
               - 'terraform/envs/dev/12-kafka/**'
+            irsa_backend:
+              - 'terraform/envs/dev/14-irsa-backend/**'
 
   plan:
     name: "Terraform Plan"
@@ -100,6 +102,7 @@ jobs:
             monitoring) echo "path=terraform/envs/dev/10-monitoring" >> $GITHUB_OUTPUT ;;
             lbc) echo "path=terraform/envs/dev/11-load-balancer-controller" >> $GITHUB_OUTPUT ;;
             kafka) echo "path=terraform/envs/dev/12-kafka" >> $GITHUB_OUTPUT ;;
+            irsa_backend) echo "path=terraform/envs/dev/14-irsa-backend" >> $GITHUB_OUTPUT ;;
             *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
           esac
 
