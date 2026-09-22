@@ -42,6 +42,33 @@ resource "helm_release" "loki" {
             memory = "512Mi"
           }
         }
+        # stateful-ng 노드의 taint(workload=stateful:NoSchedule)를 통과하기 위한 톨러레이션
+        tolerations = [
+          {
+            key      = "workload"
+            operator = "Equal"
+            value    = "stateful"
+            effect   = "NoSchedule"
+          }
+        ]
+        # stateful-ng 노드(role=stateful)에만 스케줄되도록 고정
+        affinity = {
+          nodeAffinity = {
+            requiredDuringSchedulingIgnoredDuringExecution = {
+              nodeSelectorTerms = [
+                {
+                  matchExpressions = [
+                    {
+                      key      = "role"
+                      operator = "In"
+                      values   = ["stateful"]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
       }
       read    = { replicas = 0 }
       write   = { replicas = 0 }
