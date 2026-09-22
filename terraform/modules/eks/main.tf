@@ -174,6 +174,77 @@ resource "aws_eks_node_group" "system" {
 }
 
 # ====================================================
+# 5-1. EKS 관리형 Stateful 전용 노드 그룹 (2 AZ 고가용성 분리, 이슈 #71)
+# ====================================================
+data "aws_subnet" "eks_subnets" {
+  for_each = toset(var.subnet_ids)
+  id       = each.value
+}
+
+locals {
+  # AZ 문자열(예: ap-northeast-2a)을 키로 하고 서브넷 ID를 값으로 하는 매핑 생성
+  az_to_subnet = {
+    for s in data.aws_subnet.eks_subnets : s.availability_zone => s.id
+  }
+}
+
+resource "aws_eks_node_group" "stateful" {
+  for_each = var.enable_stateful_node_group ? local.az_to_subnet : {}
+
+  cluster_name    = aws_eks_cluster.this.name
+  node_group_name = "${var.project_name}-${var.environment}-stateful-ng-${substr(each.key, -2, 2)}"
+  node_role_arn   = aws_iam_role.node.arn
+  subnet_ids      = [each.value]
+
+  scaling_config {
+    desired_size = var.stateful_desired_size_per_az
+    min_size     = var.stateful_min_size_per_az
+    max_size     = var.stateful_max_size_per_az
+  }
+
+  instance_types = var.stateful_instance_types
+  capacity_type  = "ON_DEMAND"
+  ami_type       = "AL2023_x86_64_STANDARD"
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  taint {
+    key    = "workload"
+    value  = "stateful"
+    effect = "NO_SCHEDULE"
+  }
+
+  labels = {
+    role       = "stateful"
+    workload   = "stateful"
+    managed-by = "terraform"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      scaling_config[0].desired_size,
+      scaling_config[0].min_size,
+    ]
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_worker,
+    aws_iam_role_policy_attachment.node_cni,
+    aws_iam_role_policy_attachment.node_ecr,
+    aws_iam_role_policy_attachment.node_ssm
+  ]
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-stateful-ng-${substr(each.key, -2, 2)}"
+    }
+  )
+}
+
+# ====================================================
 # 6. EKS 기본 필수 애드온
 # ====================================================
 resource "aws_eks_addon" "vpc_cni" {

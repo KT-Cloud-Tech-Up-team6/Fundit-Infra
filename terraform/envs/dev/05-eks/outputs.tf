@@ -32,3 +32,8 @@ output "system_node_group_id" {
   description = "시스템 노드 그룹 ID"
   value       = module.eks.system_node_group_id
 }
+
+output "stateful_node_group_ids" {
+  description = "Stateful 전용 노드 그룹 ID 목록 (AZ별 맵)"
+  value       = module.eks.stateful_node_group_ids
+}

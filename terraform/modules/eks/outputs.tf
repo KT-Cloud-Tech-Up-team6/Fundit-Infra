@@ -42,3 +42,8 @@ output "system_node_group_id" {
   description = "시스템 노드 그룹 ID"
   value       = aws_eks_node_group.system.id
 }
+
+output "stateful_node_group_ids" {
+  description = "Stateful 전용 노드 그룹 ID 목록 (AZ별 맵)"
+  value       = { for k, v in aws_eks_node_group.stateful : k => v.id }
+}

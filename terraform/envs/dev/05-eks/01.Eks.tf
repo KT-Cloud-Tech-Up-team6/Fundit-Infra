@@ -11,6 +11,13 @@ module "eks" {
   min_size            = var.min_size
   max_size            = var.max_size
 
+  # Stateful 전용 노드그룹 설정 (이슈 #71)
+  enable_stateful_node_group   = var.enable_stateful_node_group
+  stateful_instance_types      = var.stateful_instance_types
+  stateful_desired_size_per_az = var.stateful_desired_size_per_az
+  stateful_min_size_per_az     = var.stateful_min_size_per_az
+  stateful_max_size_per_az     = var.stateful_max_size_per_az
+
   tags = var.common_tags
 }
 
