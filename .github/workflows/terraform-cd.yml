@@ -61,6 +61,7 @@ jobs:
               - 'terraform/modules/cnpg/**'
             argocd:
               - 'terraform/envs/dev/09-argocd/**'
+              - '.github/workflows/terraform-cd.yml'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
             lbc:
@@ -131,3 +132,80 @@ jobs:
               terraform apply -auto-approve
             fi
           done
+
+      - name: Checkout Fundit-GitOps
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        uses: actions/checkout@v4
+        with:
+          repository: KT-Cloud-Tech-Up-team6/Fundit-GitOps
+          ref: main
+          path: Fundit-GitOps
+          persist-credentials: false
+
+      - name: Setup kubectl
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.35.0"
+
+      - name: Configure kubectl for dev EKS
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        run: |
+          aws eks update-kubeconfig \
+            --name fundit-dev-eks \
+            --region ap-northeast-2
+
+      - name: Wait for Argo CD controllers
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        run: |
+          kubectl wait \
+            --for=condition=Established \
+            --timeout=180s \
+            crd/applications.argoproj.io \
+            crd/appprojects.argoproj.io
+
+          kubectl rollout status \
+            --namespace argocd \
+            --timeout=300s \
+            statefulset/argocd-application-controller
+
+          kubectl rollout status \
+            --namespace argocd \
+            --timeout=300s \
+            deployment/argocd-repo-server
+
+      - name: Bootstrap Fundit GitOps root application
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        run: kubectl apply -f "$GITHUB_WORKSPACE/Fundit-GitOps/root.yaml"
+
+      - name: Verify Argo CD application chain
+        if: contains(fromJSON(needs.filter.outputs.layers), 'argocd')
+        run: |
+          kubectl wait \
+            --namespace argocd \
+            --for=jsonpath='{.status.sync.status}'=Synced \
+            --timeout=600s \
+            application/fundit-root
+
+          kubectl wait \
+            --namespace argocd \
+            --for=create \
+            --timeout=300s \
+            application/fundit-dev
+
+          kubectl wait \
+            --namespace argocd \
+            --for=jsonpath='{.status.sync.status}'=Synced \
+            --timeout=600s \
+            application/fundit-dev
+
+          kubectl wait \
+            --namespace argocd \
+            --for=jsonpath='{.status.health.status}'=Healthy \
+            --timeout=600s \
+            application/fundit-dev
+
+          kubectl get applications.argoproj.io \
+            --namespace argocd \
+            fundit-root fundit-dev \
+            -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status'
