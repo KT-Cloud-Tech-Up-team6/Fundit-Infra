@@ -67,3 +67,53 @@ resource "aws_s3_bucket_cors_configuration" "this" {
     }
   }
 }
+
+# 수명 주기 규칙 설정 (선택 사항)
+resource "aws_s3_bucket_lifecycle_configuration" "this" {
+  count      = length(var.lifecycle_rules) > 0 ? 1 : 0
+  bucket     = local.bucket_id
+  depends_on = [aws_s3_bucket_versioning.this]
+
+  dynamic "rule" {
+    for_each = var.lifecycle_rules
+    content {
+      id     = rule.value.id
+      status = rule.value.status
+
+      dynamic "filter" {
+        for_each = rule.value.filter != null ? [rule.value.filter] : []
+        content {
+          prefix = filter.value.prefix
+        }
+      }
+
+      dynamic "filter" {
+        for_each = rule.value.filter == null ? [1] : []
+        content {}
+      }
+
+      dynamic "transition" {
+        for_each = rule.value.transitions != null ? rule.value.transitions : []
+        content {
+          days          = transition.value.days
+          storage_class = transition.value.storage_class
+        }
+      }
+
+      dynamic "expiration" {
+        for_each = rule.value.expiration != null ? [rule.value.expiration] : []
+        content {
+          days = expiration.value.days
+        }
+      }
+
+      dynamic "abort_incomplete_multipart_upload" {
+        for_each = rule.value.abort_incomplete_multipart_upload != null ? [rule.value.abort_incomplete_multipart_upload] : []
+        content {
+          days_after_initiation = abort_incomplete_multipart_upload.value.days_after_initiation
+        }
+      }
+    }
+  }
+}
+

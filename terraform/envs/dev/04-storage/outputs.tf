@@ -32,3 +32,25 @@ output "media_bucket_regional_domain_name" {
   description = "미디어 S3 버킷 리전 도메인 주소"
   value       = module.media_bucket.bucket_regional_domain_name
 }
+
+# 라이브 녹화 영상(VOD) S3 버킷 및 IVS 출력 (이슈 #81)
+output "video_bucket_name" {
+  description = "라이브 녹화 영상(VOD) S3 버킷 이름"
+  value       = module.video_bucket.bucket_id
+}
+
+output "video_bucket_arn" {
+  description = "라이브 녹화 영상(VOD) S3 버킷 ARN"
+  value       = module.video_bucket.bucket_arn
+}
+
+output "video_bucket_regional_domain_name" {
+  description = "라이브 녹화 영상(VOD) S3 버킷 리전 도메인 주소"
+  value       = module.video_bucket.bucket_regional_domain_name
+}
+
+output "ivs_recording_configuration_arn" {
+  description = "AWS IVS 자동 녹화 설정(Recording Configuration) ARN (백엔드 채널 생성 시 사용)"
+  value       = aws_ivs_recording_configuration.this.arn
+}
+

@@ -9,6 +9,12 @@ variable "environment" {
 }
 
 variable "common_tags" {
-  type    = map(string)
-  default = {}
+  description = "공통 태그"
+  type        = map(string)
+  default = {
+    Project   = "Fundit"
+    Team      = "Team6"
+    ManagedBy = "Terraform"
+  }
 }
+
