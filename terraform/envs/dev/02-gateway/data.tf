@@ -36,3 +36,16 @@ data "aws_lb" "eks_alb" {
     "ingress.k8s.aws/stack" = "${var.project_name}-alb"
   }
 }
+
+# 5. 현재 AWS 계정 정보 조회 (IVS 정책 등의 SourceAccount 조건용)
+data "aws_caller_identity" "current" {}
+
+# 6. 04-storage 원격 상태 안전 참조 (프로비저닝 순서 의존성 에러 방지)
+locals {
+  storage_outputs              = try(data.terraform_remote_state.storage.outputs, {})
+  video_bucket_name            = try(local.storage_outputs.video_bucket_name, null)
+  video_bucket_arn             = try(local.storage_outputs.video_bucket_arn, null)
+  video_bucket_regional_domain = try(local.storage_outputs.video_bucket_regional_domain_name, null)
+}
+
+

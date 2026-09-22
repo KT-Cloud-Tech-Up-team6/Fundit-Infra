@@ -50,6 +50,17 @@ resource "aws_cloudfront_distribution" "main" {
     origin_access_control_id = aws_cloudfront_origin_access_control.s3_oac.id
   }
   # ----------------------------------------------------
+  # 오리진 3: S3 비디오 버킷 (라이브 녹화 VOD) - 선택 사항
+  # ----------------------------------------------------
+  dynamic "origin" {
+    for_each = var.video_origin_domain != null ? [1] : []
+    content {
+      domain_name              = var.video_origin_domain
+      origin_id                = var.video_origin_id
+      origin_access_control_id = aws_cloudfront_origin_access_control.s3_oac.id
+    }
+  }
+  # ----------------------------------------------------
   # 동작 1: 기본 경로 (/*) -> App 서버로 전달 (캐시 OFF)
   # ----------------------------------------------------
   default_cache_behavior {
@@ -71,6 +82,37 @@ resource "aws_cloudfront_distribution" "main" {
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
   }
+  # ----------------------------------------------------
+  # 동작 3: 비디오 경로 (/video/*) -> VOD S3로 전달 (캐시 ON)
+  # ----------------------------------------------------
+  dynamic "ordered_cache_behavior" {
+    for_each = var.video_origin_domain != null ? [1] : []
+    content {
+      path_pattern           = "/video/*"
+      target_origin_id       = var.video_origin_id
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+      cached_methods         = ["GET", "HEAD"]
+      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    }
+  }
+
+  # ----------------------------------------------------
+  # 동작 4: IVS 자동 녹화 기본 경로 (/ivs/*) -> VOD S3로 전달 (캐시 ON)
+  # ----------------------------------------------------
+  dynamic "ordered_cache_behavior" {
+    for_each = var.video_origin_domain != null ? [1] : []
+    content {
+      path_pattern           = "/ivs/*"
+      target_origin_id       = var.video_origin_id
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+      cached_methods         = ["GET", "HEAD"]
+      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    }
+  }
+
+
   # ----------------------------------------------------
   # 기타 기본 보안 및 인증서
   # ----------------------------------------------------

@@ -32,3 +32,26 @@ variable "cors_rules" {
   description = "S3 버킷 CORS 규칙 목록 (선택 사항)"
   default     = []
 }
+
+variable "lifecycle_rules" {
+  type = list(object({
+    id     = string
+    status = string
+    filter = optional(object({
+      prefix = optional(string)
+    }))
+    transitions = optional(list(object({
+      days          = number
+      storage_class = string
+    })))
+    expiration = optional(object({
+      days = number
+    }))
+    abort_incomplete_multipart_upload = optional(object({
+      days_after_initiation = number
+    }))
+  }))
+  description = "S3 버킷 수명 주기 규칙 목록 (선택 사항)"
+  default     = []
+}
+

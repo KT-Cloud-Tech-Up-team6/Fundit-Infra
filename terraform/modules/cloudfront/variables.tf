@@ -32,6 +32,20 @@ variable "media_origin_id" {
   default     = "media-origin"
 }
 
+# 3. S3 비디오(VOD) 버킷 오리진 관련 변수
+variable "video_origin_domain" {
+  description = "S3 VOD 비디오 버킷의 도메인 주소 (선택 사항)"
+  type        = string
+  default     = null
+}
+
+variable "video_origin_id" {
+  description = "S3 VOD 비디오 오리진 식별자"
+  type        = string
+  default     = "video-origin"
+}
+
+
 variable "tags" {
   type    = map(string)
   default = {}
