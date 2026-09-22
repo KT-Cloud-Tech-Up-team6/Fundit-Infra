@@ -1,0 +1,8 @@
+backend_namespace             = "dev"
+backend_service_account_name  = "fundit-backend-sa"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
