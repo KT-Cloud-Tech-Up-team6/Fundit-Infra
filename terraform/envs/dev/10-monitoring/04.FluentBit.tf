@@ -21,6 +21,10 @@ resource "helm_release" "fluent_bit" {
               Auto_Kubernetes_Labels On
         EOT
       }
+      # Fluent Bit은 모든 노드의 로그를 수집해야 하므로 일반 워크로드보다 먼저
+      # Pod 슬롯을 확보한다. 노드의 maxPods가 가득 찬 경우 낮은 우선순위 Pod를
+      # 다른 노드 또는 Karpenter 노드로 재배치해 DaemonSet Pending을 방지한다.
+      priorityClassName = "system-node-critical"
       # 차트 기본값은 resources: {}(무제한)이다. 차트가 예시로 든 값을 그대로 쓴다.
       resources = {
         requests = {
