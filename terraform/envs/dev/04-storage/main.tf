@@ -51,7 +51,7 @@ module "video_bucket" {
   cors_rules = [
     {
       allowed_headers = ["*"]
-      allowed_methods = ["GET", "HEAD"]
+      allowed_methods = ["GET", "HEAD", "PUT", "POST"]
       allowed_origins = [
         "https://infrastudy.store",
         "http://localhost:3000"
@@ -60,6 +60,7 @@ module "video_bucket" {
       max_age_seconds = 3000
     }
   ]
+
 
   lifecycle_rules = [
     {
