@@ -69,7 +69,11 @@ resource "aws_iam_role_policy" "ecr_ci_push" {
           "ecr:CompleteLayerUpload",
           "ecr:PutImage"
         ]
-        Resource = module.ecr.repository_arns[each.value.ecr_repository]
+        # 백엔드는 서비스별 독립 ECR 저장소 전체(frontend 제외)로 푸시할 수 있도록 허용한다.
+        Resource = each.key == "backend" ? sort([
+          for repo, arn in module.ecr.repository_arns : arn
+          if repo != "fundit-frontend"
+        ]) : [module.ecr.repository_arns[each.value.ecr_repository]]
       }
     ]
   })
