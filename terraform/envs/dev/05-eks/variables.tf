@@ -43,7 +43,11 @@ variable "max_size" {
 variable "common_tags" {
   description = "공통 태그"
   type        = map(string)
-  default     = {}
+  default = {
+    Project   = "Fundit"
+    Team      = "Team6"
+    ManagedBy = "Terraform"
+  }
 }
 
 # ====================================================
