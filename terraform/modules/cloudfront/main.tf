@@ -11,6 +11,38 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewerAndCloudFrontHeaders-2022-06"
 }
 
+data "aws_cloudfront_origin_request_policy" "cors_s3" {
+  name = "Managed-CORS-S3Origin" # S3 CORS 헤더(Origin, Access-Control-*) 전달용
+}
+
+# S3 미디어 및 VOD 비디오 스트리밍용 CORS 응답 헤더 정책
+resource "aws_cloudfront_response_headers_policy" "cors_policy" {
+  name    = "${var.project_name}-${var.environment}-cors-response-policy"
+  comment = "CORS response headers policy for S3 media and VOD streaming"
+
+  cors_config {
+    access_control_allow_credentials = false
+    access_control_max_age_sec       = 3000
+    origin_override                  = true
+
+    access_control_allow_headers {
+      items = ["*"]
+    }
+    access_control_allow_methods {
+      items = ["GET", "HEAD", "OPTIONS"]
+    }
+    access_control_allow_origins {
+      items = distinct(compact([
+        var.domain_name != null ? "https://${var.domain_name}" : "https://infrastudy.store",
+        "http://localhost:3000"
+      ]))
+    }
+    access_control_expose_headers {
+      items = ["ETag"]
+    }
+  }
+}
+
 # 2. S3 보안 통제를 위한 OAC (Origin Access Control) 생성
 resource "aws_cloudfront_origin_access_control" "s3_oac" {
   name                              = "${var.project_name}-${var.environment}-s3-oac"
@@ -19,6 +51,7 @@ resource "aws_cloudfront_origin_access_control" "s3_oac" {
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"
 }
+
 
 # 3. CloudFront 배포 생성 (다중 오리진: ALB + S3)
 resource "aws_cloudfront_distribution" "main" {
@@ -75,12 +108,14 @@ resource "aws_cloudfront_distribution" "main" {
   # 동작 2: 미디어 경로 (/media/*) -> S3로 전달 (캐시 ON) 
   # ----------------------------------------------------
   ordered_cache_behavior {
-    path_pattern           = "/media/*"
-    target_origin_id       = var.media_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    path_pattern               = "/media/*"
+    target_origin_id           = var.media_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.cors_s3.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.cors_policy.id
   }
   # ----------------------------------------------------
   # 동작 3: 비디오 경로 (/video/*) -> VOD S3로 전달 (캐시 ON)
@@ -88,12 +123,14 @@ resource "aws_cloudfront_distribution" "main" {
   dynamic "ordered_cache_behavior" {
     for_each = var.video_origin_domain != null ? [1] : []
     content {
-      path_pattern           = "/video/*"
-      target_origin_id       = var.video_origin_id
-      viewer_protocol_policy = "redirect-to-https"
-      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-      cached_methods         = ["GET", "HEAD"]
-      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+      path_pattern               = "/video/*"
+      target_origin_id           = var.video_origin_id
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+      cached_methods             = ["GET", "HEAD"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+      origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.cors_s3.id
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.cors_policy.id
     }
   }
 
@@ -103,14 +140,17 @@ resource "aws_cloudfront_distribution" "main" {
   dynamic "ordered_cache_behavior" {
     for_each = var.video_origin_domain != null ? [1] : []
     content {
-      path_pattern           = "/ivs/*"
-      target_origin_id       = var.video_origin_id
-      viewer_protocol_policy = "redirect-to-https"
-      allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-      cached_methods         = ["GET", "HEAD"]
-      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+      path_pattern               = "/ivs/*"
+      target_origin_id           = var.video_origin_id
+      viewer_protocol_policy     = "redirect-to-https"
+      allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+      cached_methods             = ["GET", "HEAD"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+      origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.cors_s3.id
+      response_headers_policy_id = aws_cloudfront_response_headers_policy.cors_policy.id
     }
   }
+
 
 
   # ----------------------------------------------------
