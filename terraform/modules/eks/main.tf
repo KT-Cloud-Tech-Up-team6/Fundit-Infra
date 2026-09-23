@@ -123,6 +123,37 @@ resource "aws_iam_role_policy_attachment" "node_ssm" {
   role       = aws_iam_role.node.name
 }
 
+# Ansible 보안 점검 파일 전송용 S3 버킷 접근 권한 (이슈 #114)
+resource "aws_iam_role_policy" "node_ansible_s3" {
+  name = "${var.project_name}-${var.environment}-node-ansible-s3-policy"
+  role = aws_iam_role.node.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AnsibleTransferBucketAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = "arn:aws:s3:::fundit-security-ansible-transfer-dev-team6"
+      },
+      {
+        Sid    = "AnsibleTransferObjectAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "arn:aws:s3:::fundit-security-ansible-transfer-dev-team6/*"
+      }
+    ]
+  })
+}
+
 # ====================================================
 # 5. EKS 관리형 시스템 노드 그룹 (2 AZ 고가용성)
 # ====================================================

@@ -41,6 +41,12 @@ variable "root_volume_size" {
   default     = 30
 }
 
+variable "iam_instance_profile" {
+  description = "EC2 인스턴스에 연결할 IAM 인스턴스 프로파일 이름 (선택 사항)"
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

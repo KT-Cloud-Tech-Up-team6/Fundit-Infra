@@ -54,3 +54,14 @@ output "ivs_recording_configuration_arn" {
   value       = aws_ivs_recording_configuration.this.arn
 }
 
+# Ansible 보안 점검 파일 전송용 S3 버킷 출력 (이슈 #114)
+output "ansible_transfer_bucket_name" {
+  description = "Ansible 보안 점검 파일 전송용 S3 버킷 이름"
+  value       = module.ansible_transfer_bucket.bucket_id
+}
+
+output "ansible_transfer_bucket_arn" {
+  description = "Ansible 보안 점검 파일 전송용 S3 버킷 ARN"
+  value       = module.ansible_transfer_bucket.bucket_arn
+}
+

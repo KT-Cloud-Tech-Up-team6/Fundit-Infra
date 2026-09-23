@@ -44,6 +44,37 @@ resource "aws_iam_role_policy_attachment" "node_ssm" {
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Ansible 보안 점검 파일 전송용 S3 버킷 접근 권한 (이슈 #114)
+resource "aws_iam_role_policy" "node_ansible_s3" {
+  name = "karpenter-node-ansible-s3-policy"
+  role = aws_iam_role.node.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AnsibleTransferBucketAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:s3:::fundit-security-ansible-transfer-dev-team6"
+      },
+      {
+        Sid    = "AnsibleTransferObjectAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:s3:::fundit-security-ansible-transfer-dev-team6/*"
+      }
+    ]
+  })
+}
+
 # Karpenter 컨트롤러 파드가 assume하는 역할. OIDC(IRSA)로 ServiceAccount와 연결한다
 data "aws_iam_policy_document" "controller_assume_role" {
   statement {
