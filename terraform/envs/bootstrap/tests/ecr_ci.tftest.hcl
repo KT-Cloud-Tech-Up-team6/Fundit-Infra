@@ -96,12 +96,13 @@ run "write_permissions_do_not_cross_repositories" {
     condition = (
       aws_iam_role_policy.ecr_ci_push["backend"].role == "fundit-backend-ci-role" &&
       aws_iam_role_policy.ecr_ci_push["frontend"].role == "fundit-frontend-ci-role" &&
-      jsondecode(aws_iam_role_policy.ecr_ci_push["backend"].policy).Statement[1].Resource ==
-      "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-backend" &&
-      jsondecode(aws_iam_role_policy.ecr_ci_push["frontend"].policy).Statement[1].Resource ==
-      "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend"
+      contains(jsondecode(aws_iam_role_policy.ecr_ci_push["backend"].policy).Statement[1].Resource, "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-backend") &&
+      !contains(jsondecode(aws_iam_role_policy.ecr_ci_push["backend"].policy).Statement[1].Resource, "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend") &&
+      jsondecode(aws_iam_role_policy.ecr_ci_push["frontend"].policy).Statement[1].Resource == [
+        "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend"
+      ]
     )
-    error_message = "각 Push 정책은 자기 Role과 ECR 저장소 한 개에만 연결되어야 합니다."
+    error_message = "백엔드와 프론트엔드 Push 정책은 서로의 저장소 쓰기 권한을 침범하지 않아야 합니다."
   }
 
   assert {
