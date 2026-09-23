@@ -1,0 +1,10 @@
+external_secrets_chart_version = "2.10.0"
+namespace                      = "external-secrets"
+service_account_name           = "external-secrets"
+secret_path_prefix             = "fundit/dev"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}

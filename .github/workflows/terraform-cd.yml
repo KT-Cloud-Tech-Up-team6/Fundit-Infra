@@ -71,6 +71,8 @@ jobs:
               - 'terraform/envs/dev/12-kafka/**'
             irsa_backend:
               - 'terraform/envs/dev/14-irsa-backend/**'
+            external_secrets:
+              - 'terraform/envs/dev/15-external-secrets/**'
 
   apply:
     name: "Terraform Apply"
@@ -117,6 +119,7 @@ jobs:
             "lbc:terraform/envs/dev/11-load-balancer-controller"
             "kafka:terraform/envs/dev/12-kafka"
             "irsa_backend:terraform/envs/dev/14-irsa-backend"
+            "external_secrets:terraform/envs/dev/15-external-secrets"
           )
 
           CHANGED='${{ needs.filter.outputs.layers }}'
