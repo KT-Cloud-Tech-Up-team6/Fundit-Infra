@@ -61,7 +61,6 @@ jobs:
               - 'terraform/modules/cnpg/**'
             argocd:
               - 'terraform/envs/dev/09-argocd/**'
-              - '.github/workflows/terraform-cd.yml'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
             lbc:
