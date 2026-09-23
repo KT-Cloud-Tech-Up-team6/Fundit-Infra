@@ -39,8 +39,13 @@ override_module {
   target = module.ecr
   outputs = {
     repository_arns = {
-      fundit-backend  = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-backend"
-      fundit-frontend = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend"
+      fundit-backend          = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-backend"
+      fundit-frontend         = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend"
+      fundit-order            = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-order"
+      fundit-ai-cuesheet      = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-ai-cuesheet"
+      fundit-ai-funding-story = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-ai-funding-story"
+      fundit-ai-copilot       = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-ai-copilot"
+      fundit-ai-highlight     = "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-ai-highlight"
     }
     repository_urls = {
       fundit-backend  = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/fundit-backend"
@@ -73,7 +78,15 @@ run "trust_is_limited_to_verified_repository_branches" {
       jsondecode(aws_iam_role.ecr_ci["backend"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
       "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-backend@1348212870:ref:refs/heads/develop" &&
       jsondecode(aws_iam_role.ecr_ci["frontend"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
-      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-FE@1344517410:ref:refs/heads/main"
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-FE@1344517410:ref:refs/heads/main" &&
+      jsondecode(aws_iam_role.ecr_ci["ai_cuesheet"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Ai-cuesheet@1375533793:ref:refs/heads/main" &&
+      jsondecode(aws_iam_role.ecr_ci["ai_funding_story"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-AI-Funding-Story@1372645731:ref:refs/heads/main" &&
+      jsondecode(aws_iam_role.ecr_ci["ai_copilot"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Ai-copilot@1356653351:ref:refs/heads/main" &&
+      jsondecode(aws_iam_role.ecr_ci["ai_highlight"].assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Funddit-Ai-highlight@1363599970:ref:refs/heads/master"
     )
     error_message = "다른 저장소/ID, 임의 브랜치, PR, Environment subject로 신뢰 범위를 넓히면 안 됩니다."
   }
@@ -103,6 +116,25 @@ run "write_permissions_do_not_cross_repositories" {
       ]
     )
     error_message = "백엔드와 프론트엔드 Push 정책은 서로의 저장소 쓰기 권한을 침범하지 않아야 합니다."
+  }
+
+  assert {
+    condition = (
+      contains(jsondecode(aws_iam_role_policy.ecr_ci_push["backend"].policy).Statement[1].Resource, "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-order") &&
+      alltrue([
+        for key, repo in {
+          ai_cuesheet      = "fundit-ai-cuesheet"
+          ai_funding_story = "fundit-ai-funding-story"
+          ai_copilot       = "fundit-ai-copilot"
+          ai_highlight     = "fundit-ai-highlight"
+        } :
+        !contains(jsondecode(aws_iam_role_policy.ecr_ci_push["backend"].policy).Statement[1].Resource, "arn:aws:ecr:ap-northeast-2:123456789012:repository/${repo}") &&
+        jsondecode(aws_iam_role_policy.ecr_ci_push[key].policy).Statement[1].Resource == [
+          "arn:aws:ecr:ap-northeast-2:123456789012:repository/${repo}"
+        ]
+      ])
+    )
+    error_message = "AI 서비스 Push 정책은 자기 저장소 한 개만 허용하고, 백엔드 정책은 AI 저장소를 포함하지 않아야 합니다."
   }
 
   assert {

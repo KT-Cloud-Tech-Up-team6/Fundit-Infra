@@ -41,7 +41,7 @@ Fundit 서비스가 올라갈 AWS 인프라(VPC, EKS, DB, 스토리지, CI 연�
 7. **오브젝트 저장** — Media-VOD, Static-Assets, DB-Backup을 S3에 저장 `(s3)`
 8. **사설 통신** — EKS에서 S3·ECR로 나가는 트래픽은 NAT 대신 VPC Endpoint를 거친다 `(vpc-endpoints)`
 9. **CI/CD** — 개발자 push → GitHub Actions → ECR(`ecr`) → ArgoCD가 `Fundit-GitOps`를 보고 EKS에 배포
-10. **RAG(AI 검색)** — RAG-Source-docs(S3)와 pgvector DB는 AI팀 레포(`funding-story-ai` 등) 소관이다. 지금은 PoC 단계라 Fundit-Infra가 만들지 않는다.
+10. **RAG(AI 검색)** — RAG-Source-docs(S3)와 pgvector DB는 AI팀 레포(`Fundit-AI-Funding-Story` 등) 소관이다. 지금은 PoC 단계라 Fundit-Infra가 만들지 않는다.
 
 모듈별 구현 상태는 이슈 트래커를 따른다.
 
@@ -53,7 +53,7 @@ Fundit 서비스가 올라갈 AWS 인프라(VPC, EKS, DB, 스토리지, CI 연�
 | `Fundit-backend` | CI 빌드 후 ECR push | 백엔드 앱(Spring Boot MSA) |
 | `Fundit-FE` | CI 빌드 후 ECR push | 프론트엔드(Next.js) |
 | `Fundit-GitOps` | ArgoCD가 pull(GitOps) | 배포 매니페스트, 클러스터 애드온 정책값 |
-| `funding-story-ai`, `live-commerce-copilot-mvp`(`-mvp1`) | — | AI팀 소관 |
+| `Fundit-Ai-cuesheet`, `Fundit-AI-Funding-Story`, `Fundit-Ai-copilot`, `Funddit-Ai-highlight` | CI 빌드 후 ECR push | AI팀 소관 |
 
 이 레포 내부:
 
