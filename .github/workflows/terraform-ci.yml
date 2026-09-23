@@ -71,6 +71,8 @@ jobs:
               - 'terraform/envs/dev/12-kafka/**'
             irsa_backend:
               - 'terraform/envs/dev/14-irsa-backend/**'
+            external_secrets:
+              - 'terraform/envs/dev/15-external-secrets/**'
 
   plan:
     name: "Terraform Plan"
@@ -103,6 +105,7 @@ jobs:
             lbc) echo "path=terraform/envs/dev/11-load-balancer-controller" >> $GITHUB_OUTPUT ;;
             kafka) echo "path=terraform/envs/dev/12-kafka" >> $GITHUB_OUTPUT ;;
             irsa_backend) echo "path=terraform/envs/dev/14-irsa-backend" >> $GITHUB_OUTPUT ;;
+            external_secrets) echo "path=terraform/envs/dev/15-external-secrets" >> $GITHUB_OUTPUT ;;
             *) echo "Unknown layer: ${{ matrix.layer }}"; exit 1 ;;
           esac
 

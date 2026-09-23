@@ -61,7 +61,6 @@ jobs:
               - 'terraform/modules/cnpg/**'
             argocd:
               - 'terraform/envs/dev/09-argocd/**'
-              - '.github/workflows/terraform-cd.yml'
             monitoring:
               - 'terraform/envs/dev/10-monitoring/**'
             lbc:
@@ -71,6 +70,8 @@ jobs:
               - 'terraform/envs/dev/12-kafka/**'
             irsa_backend:
               - 'terraform/envs/dev/14-irsa-backend/**'
+            external_secrets:
+              - 'terraform/envs/dev/15-external-secrets/**'
 
   apply:
     name: "Terraform Apply"
@@ -117,6 +118,7 @@ jobs:
             "lbc:terraform/envs/dev/11-load-balancer-controller"
             "kafka:terraform/envs/dev/12-kafka"
             "irsa_backend:terraform/envs/dev/14-irsa-backend"
+            "external_secrets:terraform/envs/dev/15-external-secrets"
           )
 
           CHANGED='${{ needs.filter.outputs.layers }}'

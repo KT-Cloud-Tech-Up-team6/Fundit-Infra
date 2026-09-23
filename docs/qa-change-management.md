@@ -28,7 +28,6 @@ PR을 열면 `Terraform CI (PR Plan)`이 바뀐 레이어마다 아래를 실행
 
 CI는 PR이 `terraform/**` 또는 `.github/workflows/terraform-ci.yml`을 바꿀 때만 실행된다(`.github/workflows/terraform-ci.yml:7-9`).
 `.github/workflows/terraform-cd.yml`만 바꾼 PR은 plan 없이 병합된다.
-이 PR도 병합되면 CD가 아래 `root.yaml` 재적용까지 실행한다.
 
 병합 전에 PR 코멘트의 plan에서 삭제와 재생성을 확인한다.
 `destroy`나 `must be replaced`가 있으면 아래 위험도 기준으로 적용 시점을 정한다.
@@ -40,8 +39,9 @@ apply 단계는 `dev-apply` 환경 승인을 받아야 실행된다.
 승인자는 `jinsw1` `mshjgr` `BIN-829` 세 명이다.
 승인자는 승인 전에 아래 위험도 기준의 적용 시점인지 확인한다.
 
-`terraform/envs/dev/09-argocd/` 또는 `.github/workflows/terraform-cd.yml`이 바뀌면 CD는 apply 뒤에 Fundit-GitOps `main`의 `root.yaml`을 다시 적용한다(`.github/workflows/terraform-cd.yml:64` `:182`).
+`terraform/envs/dev/09-argocd/`가 바뀌면 CD는 apply 뒤에 Fundit-GitOps `main`의 `root.yaml`을 다시 적용한다(`.github/workflows/terraform-cd.yml:63` `:184`).
 이때 `fundit-root` Application에서 `root.yaml`에 적힌 필드(`targetRevision` 등)를 수동으로 바꿨다면 `root.yaml` 값으로 돌아간다.
+CD 워크플로 파일만 바뀐 경우에는 이 단계가 실행되지 않는다.
 Argo CD Application을 수동으로 바꾼 상태라면 그 작업자와 확인한 뒤 승인한다.
 
 ## 위험도 분류
@@ -78,4 +78,4 @@ DB 초기화는 팀 요청이 있을 때만 한다.
 - [ ] PR plan 코멘트에서 삭제와 재생성 항목을 확인했다
 - [ ] 위험도를 정했고 그 위험도의 적용 시점에 맞췄다
 - [ ] Medium 이상이면 사전 공지했다
-- [ ] argocd 레이어나 CD 워크플로 변경이면 Argo CD 수동 작업 여부를 확인했다
+- [ ] argocd 레이어 변경이면 Argo CD 수동 작업 여부를 확인했다
