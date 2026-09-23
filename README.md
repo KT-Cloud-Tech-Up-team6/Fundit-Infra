@@ -37,13 +37,13 @@ Fundit 서비스가 올라갈 AWS 인프라(VPC, EKS, DB, 스토리지, CI 연�
 3. **백엔드 처리** — ALB → EKS 클러스터(프라이빗 서브넷, 2AZ) `(eks)`
 4. **오토스케일링** — Karpenter가 노드를, KEDA가 파드를 늘린다. 컨트롤러 설치는 이 레포, 스케일 정책값은 `Fundit-GitOps` `(eks · GitOps)`
 5. **데이터 저장** — CNPG 오퍼레이터가 EKS 안에 PostgreSQL Primary/Replica(자동 failover)를 띄운다. 오퍼레이터 설치는 이 레포, Cluster 스펙은 `Fundit-GitOps` `(eks · GitOps)`
-6. **결제 이벤트** — PG사 웹훅 → SQS 큐 → 멱등 처리 후 백엔드로 전달 `(sqs)`
+6. **결제** — 토스 웹훅은 payment-service가 HTTP로 받는다. 서비스 간 결제 이벤트는 EKS 안의 Kafka로 주고받는다 `(envs/dev/12-kafka)`
 7. **오브젝트 저장** — Media-VOD, Static-Assets, DB-Backup을 S3에 저장 `(s3)`
 8. **사설 통신** — EKS에서 S3·ECR로 나가는 트래픽은 NAT 대신 VPC Endpoint를 거친다 `(vpc-endpoints)`
 9. **CI/CD** — 개발자 push → GitHub Actions → ECR(`ecr`) → ArgoCD가 `Fundit-GitOps`를 보고 EKS에 배포
 10. **RAG(AI 검색)** — RAG-Source-docs(S3)와 pgvector DB는 AI팀 레포(`funding-story-ai` 등) 소관이다. 지금은 PoC 단계라 Fundit-Infra가 만들지 않는다.
 
-모듈별 구현 상태는 이슈 트래커를 따른다. 지금은 `vpc`, `security-groups`, `ec2`, `ecr`, `s3`만 코드가 있고 나머지(`nat-instance`, `vpc-endpoints`, `alb`, `cloudfront-waf`, `route53-acm`, `eks`, `sqs`)는 빈 모듈이다.
+모듈별 구현 상태는 이슈 트래커를 따른다.
 
 ## 3. 레포 구조
 
@@ -68,7 +68,7 @@ Fundit-Infra/
 │   └── modules/
 │       ├── vpc, security-groups, nat-instance, vpc-endpoints
 │       ├── alb, cloudfront-waf, route53-acm
-│       ├── ec2, eks, ecr, s3, sqs
+│       ├── ec2, eks, ecr, s3
 ├── packer/         # dev EC2용 Docker AMI 빌드
 ├── ansible/
 ├── .github/ISSUE_TEMPLATE/
