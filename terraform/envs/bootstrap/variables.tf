@@ -34,7 +34,8 @@ variable "ecr_repository_names" {
     "fundit-gateway", "fundit-auth", "fundit-member",
     "fundit-payment", "fundit-order", "fundit-funding",
     "fundit-project", "fundit-search", "fundit-fulfillment",
-    "fundit-chat", "fundit-notification", "fundit-live"
+    "fundit-chat", "fundit-notification", "fundit-live",
+    "fundit-ai-cuesheet", "fundit-ai-funding-story", "fundit-ai-copilot", "fundit-ai-highlight"
   ]
 }
 

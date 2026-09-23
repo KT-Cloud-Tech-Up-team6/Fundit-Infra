@@ -10,13 +10,17 @@ Fundit-Infra [Issue #37](https://github.com/KT-Cloud-Tech-Up-team6/Fundit-Infra/
 |---|---|
 | 선언 | `terraform/envs/bootstrap/04.ECRPushOIDC.tf` |
 | 공통 인증 공급자 | 기존 `aws_iam_openid_connect_provider.github` 재사용 |
-| Backend | `Fundit-backend`의 `develop` → `fundit-backend-ci-role` → `fundit-backend` |
+| Backend | `Fundit-backend`의 `develop` → `fundit-backend-ci-role` → 다른 CI Role 소유 저장소를 제외한 서비스별 저장소 |
 | Frontend | `Fundit-FE`의 `main` → `fundit-frontend-ci-role` → `fundit-frontend` |
-| 출력 | `ecr_ci_role_arns`의 `backend` / `frontend`, 기존 `ecr_repository_urls` |
+| AI cuesheet | `Fundit-Ai-cuesheet`의 `main` → `fundit-ai-cuesheet-ci-role` → `fundit-ai-cuesheet` |
+| AI funding story | `Fundit-AI-Funding-Story`의 `main` → `fundit-ai-funding-story-ci-role` → `fundit-ai-funding-story` |
+| AI copilot | `Fundit-Ai-copilot`의 `main` → `fundit-ai-copilot-ci-role` → `fundit-ai-copilot` |
+| AI highlight | `Funddit-Ai-highlight`의 `master` → `fundit-ai-highlight-ci-role` → `fundit-ai-highlight` |
+| 출력 | `ecr_ci_role_arns`의 `backend` / `frontend` / `ai_cuesheet` / `ai_funding_story` / `ai_copilot` / `ai_highlight`, 기존 `ecr_repository_urls` |
 | 조용빈 | 이미지 CI 인증 코드·검증, GitOps 이미지 계약과 후속 파이프라인 연결 |
 | 이성규와 협업 | AWS IAM/ECR 검토, 실제 bootstrap plan/apply, EC2 Pull 권한·원격 접속 방식 |
 
-기존 Terraform 실행 Role의 trust policy와 OIDC 공급자, ECR 설정은 이 변경의 수정 대상이
+기존 Terraform 실행 Role의 trust policy와 OIDC 공급자는 이 변경의 수정 대상이
 아니다. [Issue #54](https://github.com/KT-Cloud-Tech-Up-team6/Fundit-Infra/issues/54)는
 별도 담당자가 진행하며, 그 복구가 끝나기 전에도 여기의 코드 검증은 가능하다.
 `bootstrap` 변경은 기존 Terraform CI/CD의 감지 대상이므로 실제 반영 일정은 AWS 담당자와
@@ -29,13 +33,17 @@ Terraform 변수 우선순위에 따라 그 값이 기본값을 대체한다.
 
 ## 신뢰하는 GitHub 실행
 
-2026-09-14 GitHub API 조회 결과 두 저장소는 모두 `use_default: true`,
-`use_immutable_subject: true`다. 아래 두 `sub`를 각각의 Role에서 `StringEquals`로 허용하고,
+2026-09-14(Backend·Frontend)와 2026-09-23(AI 4개) GitHub API 조회 결과 여섯 저장소는 모두
+`use_default: true`, `use_immutable_subject: true`다. 아래 `sub`를 각각의 Role에서 `StringEquals`로 허용하고,
 `aud`도 `sts.amazonaws.com`과 정확히 일치해야 한다.
 
 ```text
 Backend:  repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-backend@1348212870:ref:refs/heads/develop
 Frontend: repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-FE@1344517410:ref:refs/heads/main
+AI cuesheet:      repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Ai-cuesheet@1375533793:ref:refs/heads/main
+AI funding story: repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-AI-Funding-Story@1372645731:ref:refs/heads/main
+AI copilot:       repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-Ai-copilot@1356653351:ref:refs/heads/main
+AI highlight:     repo:KT-Cloud-Tech-Up-team6@316099892/Funddit-Ai-highlight@1363599970:ref:refs/heads/master
 ```
 
 브랜치는 현재 각 저장소의 기본 브랜치를 기준으로 정했다. ID는 공개 식별자이며 토큰이나
@@ -47,6 +55,10 @@ Secret이 아니다. 조직명·저장소명·ID를 wildcard로 확장하지 않
 ```bash
 gh api repos/KT-Cloud-Tech-Up-team6/Fundit-backend/actions/oidc/customization/sub
 gh api repos/KT-Cloud-Tech-Up-team6/Fundit-FE/actions/oidc/customization/sub
+gh api repos/KT-Cloud-Tech-Up-team6/Fundit-Ai-cuesheet/actions/oidc/customization/sub
+gh api repos/KT-Cloud-Tech-Up-team6/Fundit-AI-Funding-Story/actions/oidc/customization/sub
+gh api repos/KT-Cloud-Tech-Up-team6/Fundit-Ai-copilot/actions/oidc/customization/sub
+gh api repos/KT-Cloud-Tech-Up-team6/Funddit-Ai-highlight/actions/oidc/customization/sub
 ```
 
 일반 `pull_request`, 다른 브랜치, 태그, `environment:...` subject는 허용하지 않는다.
@@ -63,6 +75,7 @@ trust policy를 함께 협의해야 한다.
   로그인 API이며, 다른 저장소의 이미지에 쓰기 권한을 부여하는 것은 아니다.
 - `BatchCheckLayerAvailability`, `BatchGetImage`, `InitiateLayerUpload`, `UploadLayerPart`,
   `CompleteLayerUpload`, `PutImage`는 자기 ECR 저장소 ARN 한 개에만 허용한다.
+  Backend Role은 예외로 서비스별 저장소 전체에 허용하되 다른 CI Role이 소유한 저장소는 제외한다.
 - ECR 생성·삭제, lifecycle 변경, IAM 관리, EC2 배포, GitOps 저장소 쓰기는 이 Role의 권한에 없다.
 - ECR의 base image 또는 registry cache를 Pull하는 권한(`GetDownloadUrlForLayer`)은 포함하지
   않는다. 그런 빌드 방식이 필요하면 대상 저장소와 권한을 별도로 검토한다.
@@ -98,8 +111,8 @@ override를 사용해 Role 신뢰 조건 및 저장소 간 쓰기 권한 분리�
 테스트의 `command = apply`는 Terraform 1.10에서 mock ARN을 확정하기 위한 모의 실행이며,
 실제 AWS에 리소스를 생성하는 `terraform apply`와 다르다.
 
-AWS 담당자는 실제 상태를 사용하는 bootstrap plan에서 두 IAM Role과 두 inline policy의
-추가를 확인한다. 기존 OIDC 공급자·ECR·Terraform Role에 예상하지 않은 변경이 있으면
+AWS 담당자는 실제 상태를 사용하는 bootstrap plan에서 추가되는 CI Role과 inline policy를
+확인한다. 기존 OIDC 공급자·ECR·Terraform Role에 예상하지 않은 변경이 있으면
 원인을 확인한 뒤 반영한다. 실제 AWS 조회·apply·워크플로 재실행은 협업을 통해 진행한다.
 
 반영 후 전달할 출력은 `ecr_ci_role_arns`와 `ecr_repository_urls` 두 항목이다.
