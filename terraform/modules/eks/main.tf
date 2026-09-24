@@ -124,7 +124,10 @@ resource "aws_iam_role_policy_attachment" "node_ssm" {
 }
 
 # Ansible 보안 점검 파일 전송용 S3 버킷 접근 권한 (이슈 #114)
+# 버킷 이름이 전달된 경우에만 노드 Role에 S3 접근 정책을 생성하여 타 환경 격리 및 최소 권한 유지
 resource "aws_iam_role_policy" "node_ansible_s3" {
+  count = var.security_transfer_bucket_name != null ? 1 : 0
+
   name = "${var.project_name}-${var.environment}-node-ansible-s3-policy"
   role = aws_iam_role.node.name
 
@@ -138,7 +141,7 @@ resource "aws_iam_role_policy" "node_ansible_s3" {
           "s3:ListBucket",
           "s3:GetBucketLocation"
         ]
-        Resource = "arn:aws:s3:::fundit-security-ansible-transfer-dev-team6"
+        Resource = "arn:aws:s3:::${var.security_transfer_bucket_name}"
       },
       {
         Sid    = "AnsibleTransferObjectAccess"
@@ -148,7 +151,7 @@ resource "aws_iam_role_policy" "node_ansible_s3" {
           "s3:PutObject",
           "s3:DeleteObject"
         ]
-        Resource = "arn:aws:s3:::fundit-security-ansible-transfer-dev-team6/*"
+        Resource = "arn:aws:s3:::${var.security_transfer_bucket_name}/*"
       }
     ]
   })

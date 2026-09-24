@@ -94,7 +94,7 @@ resource "aws_iam_role_policy" "inspector_ssm_session" {
           "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.name}::document/AWS-StartInteractiveCommand"
         ]
       },
-      # (4) 세션 종료 및 재개는 점검 세션에 한정
+      # (4) 세션 종료 및 재개는 점검 서버에서 생성한 세션에 한정 (i-0f0f2c3d098d27291- 접두어)
       {
         Sid    = "ManageOwnSSMSessions"
         Effect = "Allow"
@@ -103,7 +103,7 @@ resource "aws_iam_role_policy" "inspector_ssm_session" {
           "ssm:ResumeSession"
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:session/*"
+          "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:session/${module.ec2.instance_id}-*"
         ]
       }
     ]

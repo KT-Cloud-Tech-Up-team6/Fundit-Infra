@@ -18,6 +18,9 @@ module "eks" {
   stateful_min_size_per_az     = var.stateful_min_size_per_az
   stateful_max_size_per_az     = var.stateful_max_size_per_az
 
+  # Ansible 보안 점검 파일 전송용 S3 버킷 설정 (이슈 #114)
+  security_transfer_bucket_name = var.security_transfer_bucket_name
+
   tags = var.common_tags
 }
 
