@@ -1,6 +1,9 @@
 backend_namespace             = "dev"
 backend_service_account_name  = "fundit-backend-sa"
 
+ai_namespace                  = "dev"
+ai_service_account_name       = "fundit-ai-sa"
+
 common_tags = {
   Project   = "Fundit"
   Team      = "Team6"
