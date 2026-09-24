@@ -125,7 +125,7 @@ resource "aws_iam_role_policy" "inspector_s3_transfer" {
           "s3:ListBucket",
           "s3:GetBucketLocation"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:s3:::fundit-security-ansible-transfer-dev-team6"
+        Resource = "arn:${data.aws_partition.current.partition}:s3:::${var.security_transfer_bucket_name}"
       },
       {
         Sid    = "AnsibleTransferObjectAccess"
@@ -135,7 +135,7 @@ resource "aws_iam_role_policy" "inspector_s3_transfer" {
           "s3:PutObject",
           "s3:DeleteObject"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:s3:::fundit-security-ansible-transfer-dev-team6/*"
+        Resource = "arn:${data.aws_partition.current.partition}:s3:::${var.security_transfer_bucket_name}/*"
       }
     ]
   })
