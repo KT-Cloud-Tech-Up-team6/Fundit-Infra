@@ -9,6 +9,7 @@ module "ec2" {
   security_group_ids   = [module.security_groups.ec2_security_group_id]
   key_name             = var.key_name
   iam_instance_profile = aws_iam_instance_profile.ansible_inspector.name
+  http_tokens          = "required"
 
   tags = var.common_tags
 }

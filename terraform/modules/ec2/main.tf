@@ -21,6 +21,13 @@ resource "aws_instance" "app" {
     )
   }
 
+  metadata_options {
+    http_endpoint               = var.http_endpoint
+    http_tokens                 = var.http_tokens
+    http_put_response_hop_limit = var.http_put_response_hop_limit
+    instance_metadata_tags      = var.instance_metadata_tags
+  }
+
   tags = merge(
     var.tags,
     {
