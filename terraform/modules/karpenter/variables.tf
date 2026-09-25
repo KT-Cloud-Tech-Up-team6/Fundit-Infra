@@ -30,3 +30,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "security_transfer_bucket_name" {
+  description = "Ansible 보안 점검 파일 전송용 S3 버킷 이름 (지정 시 노드 Role에 S3 접근 정책 생성, 미지정 시 null)"
+  type        = string
+  default     = null
+}

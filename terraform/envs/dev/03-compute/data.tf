@@ -24,3 +24,7 @@ data "aws_ami" "dev_docker" {
     values = ["available"]
   }
 }
+
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}

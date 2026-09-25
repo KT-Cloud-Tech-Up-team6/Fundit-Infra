@@ -106,3 +106,26 @@ resource "aws_ivs_recording_configuration" "this" {
   tags = var.common_tags
 }
 
+# Ansible 보안 점검 파일 전송용 S3 버킷 (이슈 #114)
+module "ansible_transfer_bucket" {
+  source = "../../../modules/s3"
+
+  bucket_name       = "fundit-security-ansible-transfer-dev-team6"
+  enable_versioning = false
+  prevent_destroy   = false
+  tags              = var.common_tags
+
+  lifecycle_rules = [
+    {
+      id     = "ansible-temp-file-cleanup"
+      status = "Enabled"
+      expiration = {
+        days = 3
+      }
+      abort_incomplete_multipart_upload = {
+        days_after_initiation = 1
+      }
+    }
+  ]
+}
+
