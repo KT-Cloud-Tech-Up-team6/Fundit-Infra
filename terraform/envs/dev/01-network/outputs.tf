@@ -13,6 +13,11 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
+output "database_subnet_ids" {
+  description = "데이터베이스 서브넷 ID 목록"
+  value       = module.vpc.database_subnet_ids
+}
+
 # ----------------------------------------------------
 # NAT 인스턴스 및 라우팅 출력값 추가
 # ----------------------------------------------------
@@ -29,6 +34,11 @@ output "nat_public_ips" {
 output "nat_instance_ids" {
   description = "생성된 NAT 인스턴스 ID 목록"
   value       = module.nat_instance.nat_instance_ids
+}
+
+output "nat_asg_names" {
+  description = "NAT Auto Scaling Group 이름 목록"
+  value       = module.nat_instance.nat_asg_names
 }
 
 output "nat_failover_lambda_arn" {
