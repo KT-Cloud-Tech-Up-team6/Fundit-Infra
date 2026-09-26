@@ -70,7 +70,7 @@ resource "aws_cloudfront_distribution" "main" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only" # ALB 자체는 HTTP로 받고 CloudFront가 HTTPS 제공 (SSL Offloading)
+      origin_protocol_policy = var.app_origin_protocol_policy
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }

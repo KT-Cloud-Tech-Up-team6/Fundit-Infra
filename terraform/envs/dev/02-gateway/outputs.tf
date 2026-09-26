@@ -22,3 +22,13 @@ output "waf_web_acl_arn" {
   description = "CloudFront에 연결된 WAF WebACL ARN"
   value       = module.waf.web_acl_arn
 }
+
+output "alb_acm_certificate_arn" {
+  description = "EKS Ingress ALB에서 참조할 서울 리전(ap-northeast-2) ACM 인증서 ARN"
+  value       = aws_acm_certificate.alb_seoul.arn
+}
+
+output "alb_origin_domain" {
+  description = "CloudFront가 ALB와 HTTPS로 통신할 때 사용할 전용 오리진 도메인 주소"
+  value       = aws_route53_record.alb_origin.fqdn
+}
