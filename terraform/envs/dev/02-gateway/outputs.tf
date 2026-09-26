@@ -32,3 +32,8 @@ output "alb_origin_domain" {
   description = "CloudFront가 ALB와 HTTPS로 통신할 때 사용할 전용 오리진 도메인 주소"
   value       = aws_route53_record.alb_origin.fqdn
 }
+
+output "ivs_recording_configuration_arn" {
+  description = "AWS IVS 자동 녹화 설정(Recording Configuration) ARN"
+  value       = try(aws_ivs_recording_configuration.this[0].arn, null)
+}
