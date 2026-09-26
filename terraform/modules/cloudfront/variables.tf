@@ -20,6 +20,12 @@ variable "app_origin_id" {
   default     = "app-origin"
 }
 
+variable "app_origin_protocol_policy" {
+  description = "ALB 오리진 통신 프로토콜 정책 (http-only, https-only, match-viewer)"
+  type        = string
+  default     = "http-only"
+}
+
 # 2. S3 미디어 버킷 오리진 관련 변수
 variable "media_origin_domain" {
   description = "S3 미디어 버킷의 도메인 주소"
