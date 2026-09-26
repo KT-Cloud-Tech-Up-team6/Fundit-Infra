@@ -17,8 +17,6 @@ resource "aws_ivs_recording_configuration" "this" {
 
   recording_reconnect_window_seconds = 60
 
-  tags = var.common_tags
-
   # 버킷 정책이 먼저 생성되어야 IVS의 S3 접근 권한 검증(CreateRecordingConfiguration)을 통과함
   depends_on = [
     aws_s3_bucket_policy.video_bucket_policy
