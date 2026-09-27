@@ -41,7 +41,9 @@ resource "aws_iam_policy" "nat_instance" {
           "ec2:AttachNetworkInterface",
           "ec2:ModifyNetworkInterfaceAttribute",
           "ec2:DescribeNetworkInterfaces",
-          "ec2:DescribeInstances"
+          "ec2:DescribeInstances",
+          "ec2:AssociateAddress",
+          "ec2:DisassociateAddress"
         ]
         Resource = "*"
       }

@@ -66,11 +66,19 @@ resource "aws_network_interface" "nat" {
   )
 }
 
-# 4. 각 NAT 고정 ENI에 고정 공인 IP (Elastic IP) 연결
+# 4. 각 NAT 인스턴스 전용 고정 공인 IP (Elastic IP) 할당
+# fck-nat HA 모드에서는 실제 아웃바운드(POSTROUTING MASQUERADE)를 수행하는
+# Primary ENI(eth0)에 부팅 시 fck-nat 서비스가 EIP를 동적으로 바인딩(associate-address)합니다.
+# 따라서 테라폼에서는 보조 ENI에 묶지 않고 EIP 풀로 관리합니다.
 resource "aws_eip" "nat" {
-  count             = length(var.public_subnet_ids)
-  network_interface = aws_network_interface.nat[count.index].id
-  domain            = "vpc"
+  count  = length(var.public_subnet_ids)
+  domain = "vpc"
+
+  # fck-nat 런타임이 부팅 시 Primary ENI(eth0)에 EIP를 동적으로 바인딩(allow-reassociation)하므로
+  # 테라폼과의 상태 경합(drift)을 방지합니다.
+  lifecycle {
+    ignore_changes = [network_interface, associate_with_private_ip, instance]
+  }
 
   tags = merge(
     var.tags,
@@ -112,10 +120,13 @@ resource "aws_launch_template" "nat" {
     subnet_id                   = var.public_subnet_ids[count.index]
   }
 
-  # 인스턴스 시작 시 fck-nat 서비스에 고정 ENI만 바인딩 (EIP는 테라폼이 고정 ENI에 영구 결합하여 관리하므로 eip_id 제외)
+  # fck-nat 공식 HA 아키텍처:
+  # 1) eni_id: 프라이빗 라우팅 타깃인 고정 보조 ENI를 eth1(수신용)로 attach
+  # 2) eip_id: 실제 인터넷 송신 인터페이스인 Primary ENI(eth0)에 고정 EIP를 associate
   user_data = base64encode(<<-EOF
     #!/bin/sh
     echo "eni_id=${aws_network_interface.nat[count.index].id}" > /etc/fck-nat.conf
+    echo "eip_id=${aws_eip.nat[count.index].id}" >> /etc/fck-nat.conf
     systemctl restart fck-nat || service fck-nat restart
   EOF
   )
