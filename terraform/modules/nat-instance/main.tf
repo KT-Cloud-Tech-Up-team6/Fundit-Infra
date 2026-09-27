@@ -82,16 +82,12 @@ resource "aws_eip" "nat" {
 
 # 5. 프라이빗 라우팅 테이블에 0.0.0.0/0 -> 해당 AZ의 고정 ENI 연결 (2AZ HA)
 # 인스턴스가 종료되거나 새로 떠도 라우팅 테이블 타겟이 유지되어 블랙홀 방지
+# 주의: ignore_changes를 사용하면 삭제된 ENI로 인한 블랙홀을 테라폼이 감지하지 못하므로 선언적 상태를 유지합니다.
 resource "aws_route" "private_nat" {
   count                  = length(var.private_route_table_ids)
   route_table_id         = var.private_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
   network_interface_id   = aws_network_interface.nat[count.index].id
-
-  # Lambda에 의한 동적 페일오버/페일백 시 테라폼의 원복(drift) 방지
-  lifecycle {
-    ignore_changes = [network_interface_id]
-  }
 }
 
 # ----------------------------------------------------
@@ -116,11 +112,10 @@ resource "aws_launch_template" "nat" {
     subnet_id                   = var.public_subnet_ids[count.index]
   }
 
-  # 인스턴스 시작 시 fck-nat 서비스에 고정 ENI 및 EIP를 바인딩하도록 설정
+  # 인스턴스 시작 시 fck-nat 서비스에 고정 ENI만 바인딩 (EIP는 테라폼이 고정 ENI에 영구 결합하여 관리하므로 eip_id 제외)
   user_data = base64encode(<<-EOF
     #!/bin/sh
     echo "eni_id=${aws_network_interface.nat[count.index].id}" > /etc/fck-nat.conf
-    echo "eip_id=${aws_eip.nat[count.index].id}" >> /etc/fck-nat.conf
     systemctl restart fck-nat || service fck-nat restart
   EOF
   )
@@ -164,6 +159,19 @@ resource "aws_autoscaling_group" "nat" {
   # EC2 Status Check 실패 시 자동 교체
   health_check_type         = "EC2"
   health_check_grace_period = 180
+
+  # CloudWatch GroupInServiceInstances 지표 수집 활성화 (1분 단위)
+  enabled_metrics = [
+    "GroupMinSize",
+    "GroupMaxSize",
+    "GroupDesiredCapacity",
+    "GroupInServiceInstances",
+    "GroupPendingInstances",
+    "GroupStandbyInstances",
+    "GroupTerminatingInstances",
+    "GroupTotalInstances",
+  ]
+  metrics_granularity = "1Minute"
 
   launch_template {
     id      = aws_launch_template.nat[count.index].id

@@ -22,6 +22,45 @@ NAT_2_TAG_NAME = os.environ.get("NAT_2_TAG_NAME", "fundit-dev-nat-2")
 ALERT_SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN")
 
 
+def get_live_instance_id_by_name(name_tag):
+    """
+    지정된 Name 태그(예: fundit-dev-nat-1)를 가진 EC2 인스턴스 중
+    running 또는 pending 상태인 인스턴스 ID를 동적으로 조회합니다.
+    ASG에 의해 인스턴스가 교체되더라도 최신 인스턴스 ID를 해석합니다.
+    """
+    if not name_tag:
+        return None
+    try:
+        resp = ec2_client.describe_instances(
+            Filters=[
+                {"Name": "tag:Name", "Values": [name_tag]},
+                {"Name": "instance-state-name", "Values": ["pending", "running"]},
+            ]
+        )
+        for reservation in resp.get("Reservations", []):
+            for inst in reservation.get("Instances", []):
+                return inst.get("InstanceId")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to find live instance for tag '{name_tag}': {e}")
+        return None
+
+
+def get_partner_instance_id(is_nat_1):
+    """
+    상대방(Partner) NAT 인스턴스 ID를 조회합니다.
+    환경 변수가 설정되어 있으면 사용하고, 비어있거나 불일치 시 Name 태그로 동적 조회합니다.
+    """
+    target_tag = NAT_2_TAG_NAME if is_nat_1 else NAT_1_TAG_NAME
+    fallback_id = NAT_2_INSTANCE_ID if is_nat_1 else NAT_1_INSTANCE_ID
+
+    live_id = get_live_instance_id_by_name(target_tag)
+    if live_id:
+        return live_id
+
+    return fallback_id
+
+
 def get_instance_name_tag(instance_id):
     """인스턴스의 Name 태그 값을 조회합니다."""
     if not instance_id:
@@ -47,6 +86,7 @@ def is_instance_healthy(instance_id):
     동시 장애 시 레이스 컨디션으로 인한 상호 교차 라우팅(Cross-routing dead instances)을 방지합니다.
     """
     if not instance_id:
+        logger.warning("is_instance_healthy called with empty or None instance_id.")
         return False
     try:
         response = ec2_client.describe_instance_status(
@@ -173,16 +213,17 @@ def handle_ec2_state_change(event):
         logger.warning(
             f"🚨 [FAST FAILOVER] {nat_name} ({instance_id}) entered '{state}' state. Triggering failover..."
         )
-        live_nat_1_eni = get_live_instance_eni(NAT_1_INSTANCE_ID, NAT_1_ENI_ID)
-        live_nat_2_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
+        live_nat_1_eni = NAT_1_ENI_ID
+        live_nat_2_eni = NAT_2_ENI_ID
 
         if is_nat_1:
-            partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
+            partner_id = get_partner_instance_id(is_nat_1=True)
+            partner_healthy = is_instance_healthy(partner_id)
             # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 False일 때만 반환
             if not partner_healthy:
-                reason = f"Partner NAT-2 is unhealthy while NAT-1 entered '{state}'"
+                reason = f"Partner NAT-2 ({partner_id}) is unhealthy while NAT-1 entered '{state}'"
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
-                send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, NAT_2_INSTANCE_ID, reason)
+                send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, partner_id, reason)
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
@@ -202,11 +243,12 @@ def handle_ec2_state_change(event):
             res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
             return {"status": "FAILOVER_TRIGGERED", "result": res}
         else:
-            partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
+            partner_id = get_partner_instance_id(is_nat_1=False)
+            partner_healthy = is_instance_healthy(partner_id)
             if not partner_healthy:
-                reason = f"Partner NAT-1 is unhealthy while NAT-2 entered '{state}'"
+                reason = f"Partner NAT-1 ({partner_id}) is unhealthy while NAT-2 entered '{state}'"
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
-                send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, NAT_1_INSTANCE_ID, reason)
+                send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, partner_id, reason)
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
@@ -414,6 +456,12 @@ def lambda_handler(event, context):
             is_nat_1 = True
         elif target_instance == NAT_2_INSTANCE_ID:
             is_nat_2 = True
+        else:
+            inst_name = get_instance_name_tag(target_instance)
+            if inst_name == NAT_1_TAG_NAME:
+                is_nat_1 = True
+            elif inst_name == NAT_2_TAG_NAME:
+                is_nat_2 = True
 
     # 인스턴스 ID 매칭이 안 된 경우 AlarmName으로 백업 판별
     if not is_nat_1 and not is_nat_2 and alarm_name:
@@ -428,19 +476,20 @@ def lambda_handler(event, context):
         )
         return {"status": "IGNORED", "reason": "Target NAT instance unknown"}
 
-    # 3. 최신 Live ENI 확인 (인스턴스 재생성 시 ENI 변경 대응)
-    live_nat_1_eni = get_live_instance_eni(NAT_1_INSTANCE_ID, NAT_1_ENI_ID)
-    live_nat_2_eni = get_live_instance_eni(NAT_2_INSTANCE_ID, NAT_2_ENI_ID)
+    # 3. 고정 Floating ENI 적용 (Self-Healing ASG 아키텍처)
+    live_nat_1_eni = NAT_1_ENI_ID
+    live_nat_2_eni = NAT_2_ENI_ID
 
     # 4. 상태별 페일오버 및 페일백 분기
     if is_nat_1:
         if new_state == "ALARM":
             logger.info("🚨 NAT-1 FAILED: Checking partner (NAT-2) status before failover...")
-            partner_healthy = is_instance_healthy(NAT_2_INSTANCE_ID)
+            partner_id = get_partner_instance_id(is_nat_1=True)
+            partner_healthy = is_instance_healthy(partner_id)
 
             # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 false일 때만 반환
             if not partner_healthy:
-                reason = f"Partner NAT-2 ({NAT_2_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
+                reason = f"Partner NAT-2 ({partner_id}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -448,8 +497,8 @@ def lambda_handler(event, context):
                 )
                 send_dual_failure_alert(
                     route_table_id=ROUTE_TABLE_A_ID,
-                    target_instance_id=NAT_1_INSTANCE_ID,
-                    partner_instance_id=NAT_2_INSTANCE_ID,
+                    target_instance_id=target_instance or NAT_1_INSTANCE_ID,
+                    partner_instance_id=partner_id,
                     reason=reason,
                 )
                 return {
@@ -480,10 +529,11 @@ def lambda_handler(event, context):
     else:  # is_nat_2
         if new_state == "ALARM":
             logger.info("🚨 NAT-2 FAILED: Checking partner (NAT-1) status before failover...")
-            partner_healthy = is_instance_healthy(NAT_1_INSTANCE_ID)
+            partner_id = get_partner_instance_id(is_nat_1=False)
+            partner_healthy = is_instance_healthy(partner_id)
 
             if not partner_healthy:
-                reason = f"Partner NAT-1 ({NAT_1_INSTANCE_ID}) health check failed (healthy={partner_healthy})"
+                reason = f"Partner NAT-1 ({partner_id}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -491,8 +541,8 @@ def lambda_handler(event, context):
                 )
                 send_dual_failure_alert(
                     route_table_id=ROUTE_TABLE_C_ID,
-                    target_instance_id=NAT_2_INSTANCE_ID,
-                    partner_instance_id=NAT_1_INSTANCE_ID,
+                    target_instance_id=target_instance or NAT_2_INSTANCE_ID,
+                    partner_instance_id=partner_id,
                     reason=reason,
                 )
                 return {
