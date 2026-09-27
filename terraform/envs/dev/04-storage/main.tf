@@ -86,26 +86,6 @@ module "video_bucket" {
   ]
 }
 
-# AWS IVS 실시간 방송 자동 녹화 설정 (Recording Configuration)
-resource "aws_ivs_recording_configuration" "this" {
-  name = "${var.project_name}-${var.environment}-ivs-recording-config"
-
-  destination_configuration {
-    s3 {
-      bucket_name = module.video_bucket.bucket_id
-    }
-  }
-
-  thumbnail_configuration {
-    recording_mode          = "INTERVAL"
-    target_interval_seconds = 60
-  }
-
-  recording_reconnect_window_seconds = 60
-
-  tags = var.common_tags
-}
-
 # Ansible 보안 점검 파일 전송용 S3 버킷 (이슈 #114)
 module "ansible_transfer_bucket" {
   source = "../../../modules/s3"

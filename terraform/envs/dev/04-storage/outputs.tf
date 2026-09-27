@@ -49,11 +49,6 @@ output "video_bucket_regional_domain_name" {
   value       = module.video_bucket.bucket_regional_domain_name
 }
 
-output "ivs_recording_configuration_arn" {
-  description = "AWS IVS 자동 녹화 설정(Recording Configuration) ARN (백엔드 채널 생성 시 사용)"
-  value       = aws_ivs_recording_configuration.this.arn
-}
-
 # Ansible 보안 점검 파일 전송용 S3 버킷 출력 (이슈 #114)
 output "ansible_transfer_bucket_name" {
   description = "Ansible 보안 점검 파일 전송용 S3 버킷 이름"

@@ -22,3 +22,8 @@ output "waf_web_acl_arn" {
   description = "CloudFront에 연결된 WAF WebACL ARN"
   value       = module.waf.web_acl_arn
 }
+
+output "ivs_recording_configuration_arn" {
+  description = "AWS IVS 자동 녹화 설정(Recording Configuration) ARN"
+  value       = try(aws_ivs_recording_configuration.this[0].arn, null)
+}
