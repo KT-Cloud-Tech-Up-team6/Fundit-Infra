@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 import boto3
 from botocore.exceptions import ClientError
 
@@ -22,43 +23,95 @@ NAT_2_TAG_NAME = os.environ.get("NAT_2_TAG_NAME", "fundit-dev-nat-2")
 ALERT_SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN")
 
 
-def get_live_instance_id_by_name(name_tag):
+def get_live_instance_id_by_name(name_tag, max_retries=3, retry_delay=1.0):
     """
     지정된 Name 태그(예: fundit-dev-nat-1)를 가진 EC2 인스턴스 중
     running 또는 pending 상태인 인스턴스 ID를 동적으로 조회합니다.
-    ASG에 의해 인스턴스가 교체되더라도 최신 인스턴스 ID를 해석합니다.
+    ASG에 의해 교체 진행 중이거나 일시적인 API 오류를 고려하여 제한된 재조회를 수행하며,
+    (instance_id, is_api_error) 튜플을 반환하여 조회 실패와 인스턴스 부재를 구분합니다.
     """
     if not name_tag:
-        return None
-    try:
-        resp = ec2_client.describe_instances(
-            Filters=[
-                {"Name": "tag:Name", "Values": [name_tag]},
-                {"Name": "instance-state-name", "Values": ["pending", "running"]},
-            ]
+        return None, False
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = ec2_client.describe_instances(
+                Filters=[
+                    {"Name": "tag:Name", "Values": [name_tag]},
+                    {"Name": "instance-state-name", "Values": ["pending", "running"]},
+                ]
+            )
+            for reservation in resp.get("Reservations", []):
+                for inst in reservation.get("Instances", []):
+                    inst_id = inst.get("InstanceId")
+                    if inst_id:
+                        return inst_id, False
+
+            # 인스턴스가 아직 등록/가동 중이지 않은 경우 짧은 대기 후 재조회
+            if attempt < max_retries:
+                logger.info(
+                    f"No pending/running instance found for tag '{name_tag}' (attempt {attempt}/{max_retries}). "
+                    f"Retrying in {retry_delay}s..."
+                )
+                time.sleep(retry_delay)
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"DescribeInstances query failed for tag '{name_tag}' (attempt {attempt}/{max_retries}): {e}"
+            )
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+
+    if last_error:
+        logger.error(
+            f"Failed to query instance for tag '{name_tag}' after {max_retries} retries due to API error: {last_error}"
         )
-        for reservation in resp.get("Reservations", []):
-            for inst in reservation.get("Instances", []):
-                return inst.get("InstanceId")
-        return None
-    except Exception as e:
-        logger.warning(f"Failed to find live instance for tag '{name_tag}': {e}")
-        return None
+        return None, True
+
+    return None, False
 
 
 def get_partner_instance_id(is_nat_1):
     """
-    상대방(Partner) NAT 인스턴스 ID를 조회합니다.
-    환경 변수가 설정되어 있으면 사용하고, 비어있거나 불일치 시 Name 태그로 동적 조회합니다.
+    상대방(Partner) NAT 인스턴스 ID를 안전하게 조회합니다.
+    1. Name 태그 기반 동적 조회를 제한된 재시도로 수행합니다.
+    2. API 조회 실패(is_api_error=True)인 경우 오래된 fallback_id를 반환하지 않고 (None, True)를 반환합니다.
+    3. 조회는 성공했으나 인스턴스를 찾지 못한 경우, fallback_id가 지정되어 있다면 현재 실제 런타임 상태를
+       단건 검증(running/pending 여부)하여 오래된/종료된 ID를 필터링합니다.
+    4. 반환값: (partner_instance_id, is_api_error)
     """
     target_tag = NAT_2_TAG_NAME if is_nat_1 else NAT_1_TAG_NAME
     fallback_id = NAT_2_INSTANCE_ID if is_nat_1 else NAT_1_INSTANCE_ID
 
-    live_id = get_live_instance_id_by_name(target_tag)
+    live_id, is_api_error = get_live_instance_id_by_name(target_tag)
     if live_id:
-        return live_id
+        return live_id, False
 
-    return fallback_id
+    if is_api_error:
+        logger.error(
+            f"API error while discovering partner NAT ({target_tag}). Refusing to return stale fallback ID."
+        )
+        return None, True
+
+    # 태그 조회 결과 인스턴스가 없는 경우: fallback_id가 유효한지 상태 확인 후 반환 (오래된 terminated ID 배제)
+    if fallback_id:
+        try:
+            resp = ec2_client.describe_instances(InstanceIds=[fallback_id])
+            for reservation in resp.get("Reservations", []):
+                for inst in reservation.get("Instances", []):
+                    st = inst.get("State", {}).get("Name")
+                    if st in ["pending", "running"]:
+                        logger.info(f"Fallback partner ID {fallback_id} verified in active state '{st}'.")
+                        return fallback_id, False
+                    else:
+                        logger.warning(
+                            f"Fallback partner ID {fallback_id} is in stale state '{st}'. Discarding."
+                        )
+        except Exception as e:
+            logger.warning(f"Failed to verify fallback instance {fallback_id}: {e}")
+
+    return None, False
 
 
 def get_instance_name_tag(instance_id):
@@ -217,13 +270,26 @@ def handle_ec2_state_change(event):
         live_nat_2_eni = NAT_2_ENI_ID
 
         if is_nat_1:
-            partner_id = get_partner_instance_id(is_nat_1=True)
-            partner_healthy = is_instance_healthy(partner_id)
-            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 False일 때만 반환
+            partner_id, is_api_error = get_partner_instance_id(is_nat_1=True)
+            if is_api_error:
+                reason = f"DescribeInstances query failed while checking partner NAT-2 ({NAT_2_TAG_NAME}) due to API error."
+                logger.error(f"🚨 FAILOVER PAUSED: {reason}")
+                return {
+                    "statusCode": 503,
+                    "status": "QUERY_FAILED_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_A_ID,
+                }
+
+            partner_healthy = is_instance_healthy(partner_id) if partner_id else False
+            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 False이거나 인스턴스가 없을 때만 반환
             if not partner_healthy:
-                reason = f"Partner NAT-2 ({partner_id}) is unhealthy while NAT-1 entered '{state}'"
+                reason = (
+                    f"Partner NAT-2 ({partner_id or 'NOT_FOUND'}) is unhealthy or not running "
+                    f"while NAT-1 entered '{state}'"
+                )
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
-                send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, partner_id, reason)
+                send_dual_failure_alert(ROUTE_TABLE_A_ID, instance_id, partner_id or "NONE", reason)
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
@@ -243,12 +309,25 @@ def handle_ec2_state_change(event):
             res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
             return {"status": "FAILOVER_TRIGGERED", "result": res}
         else:
-            partner_id = get_partner_instance_id(is_nat_1=False)
-            partner_healthy = is_instance_healthy(partner_id)
+            partner_id, is_api_error = get_partner_instance_id(is_nat_1=False)
+            if is_api_error:
+                reason = f"DescribeInstances query failed while checking partner NAT-1 ({NAT_1_TAG_NAME}) due to API error."
+                logger.error(f"🚨 FAILOVER PAUSED: {reason}")
+                return {
+                    "statusCode": 503,
+                    "status": "QUERY_FAILED_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_C_ID,
+                }
+
+            partner_healthy = is_instance_healthy(partner_id) if partner_id else False
             if not partner_healthy:
-                reason = f"Partner NAT-1 ({partner_id}) is unhealthy while NAT-2 entered '{state}'"
+                reason = (
+                    f"Partner NAT-1 ({partner_id or 'NOT_FOUND'}) is unhealthy or not running "
+                    f"while NAT-2 entered '{state}'"
+                )
                 logger.critical(f"🚨🚨 DUAL NAT FAILURE DETECTED: {reason}")
-                send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, partner_id, reason)
+                send_dual_failure_alert(ROUTE_TABLE_C_ID, instance_id, partner_id or "NONE", reason)
                 return {
                     "statusCode": 500,
                     "status": "DUAL_FAILURE_ABORTED",
@@ -484,12 +563,22 @@ def lambda_handler(event, context):
     if is_nat_1:
         if new_state == "ALARM":
             logger.info("🚨 NAT-1 FAILED: Checking partner (NAT-2) status before failover...")
-            partner_id = get_partner_instance_id(is_nat_1=True)
-            partner_healthy = is_instance_healthy(partner_id)
+            partner_id, is_api_error = get_partner_instance_id(is_nat_1=True)
+            if is_api_error:
+                reason = f"DescribeInstances query failed while checking partner NAT-2 ({NAT_2_TAG_NAME}) due to API error."
+                logger.error(f"🚨 FAILOVER PAUSED: {reason}")
+                return {
+                    "statusCode": 503,
+                    "status": "QUERY_FAILED_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_A_ID,
+                }
 
-            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 false일 때만 반환
+            partner_healthy = is_instance_healthy(partner_id) if partner_id else False
+
+            # DUAL_FAILURE_ABORTED는 상대 NAT의 실제 health가 false이거나 인스턴스가 없을 때만 반환
             if not partner_healthy:
-                reason = f"Partner NAT-2 ({partner_id}) health check failed (healthy={partner_healthy})"
+                reason = f"Partner NAT-2 ({partner_id or 'NOT_FOUND'}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -497,8 +586,8 @@ def lambda_handler(event, context):
                 )
                 send_dual_failure_alert(
                     route_table_id=ROUTE_TABLE_A_ID,
-                    target_instance_id=target_instance or NAT_1_INSTANCE_ID,
-                    partner_instance_id=partner_id,
+                    target_instance_id=target_instance or NAT_1_INSTANCE_ID or "NAT-1",
+                    partner_instance_id=partner_id or "NONE",
                     reason=reason,
                 )
                 return {
@@ -529,11 +618,21 @@ def lambda_handler(event, context):
     else:  # is_nat_2
         if new_state == "ALARM":
             logger.info("🚨 NAT-2 FAILED: Checking partner (NAT-1) status before failover...")
-            partner_id = get_partner_instance_id(is_nat_1=False)
-            partner_healthy = is_instance_healthy(partner_id)
+            partner_id, is_api_error = get_partner_instance_id(is_nat_1=False)
+            if is_api_error:
+                reason = f"DescribeInstances query failed while checking partner NAT-1 ({NAT_1_TAG_NAME}) due to API error."
+                logger.error(f"🚨 FAILOVER PAUSED: {reason}")
+                return {
+                    "statusCode": 503,
+                    "status": "QUERY_FAILED_ABORTED",
+                    "reason": reason,
+                    "route_table_id": ROUTE_TABLE_C_ID,
+                }
+
+            partner_healthy = is_instance_healthy(partner_id) if partner_id else False
 
             if not partner_healthy:
-                reason = f"Partner NAT-1 ({partner_id}) health check failed (healthy={partner_healthy})"
+                reason = f"Partner NAT-1 ({partner_id or 'NOT_FOUND'}) health check failed (healthy={partner_healthy})"
                 logger.critical(
                     f"🚨🚨 CRITICAL: DUAL NAT FAILURE DETECTED! {reason}. "
                     f"Both NAT instances are DOWN! "
@@ -541,8 +640,8 @@ def lambda_handler(event, context):
                 )
                 send_dual_failure_alert(
                     route_table_id=ROUTE_TABLE_C_ID,
-                    target_instance_id=target_instance or NAT_2_INSTANCE_ID,
-                    partner_instance_id=partner_id,
+                    target_instance_id=target_instance or NAT_2_INSTANCE_ID or "NAT-2",
+                    partner_instance_id=partner_id or "NONE",
                     reason=reason,
                 )
                 return {
