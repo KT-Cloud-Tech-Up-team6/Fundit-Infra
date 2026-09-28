@@ -241,23 +241,26 @@ def handle_ec2_state_change(event):
                 "instance_id": instance_id,
             }
 
+        # 2-ENI 아키텍처에서 Private Route Table은 항상 고정 Secondary Floating ENI(eth1)를 타깃으로 지정해야 합니다.
+        # Primary ENI(eth0)로 라우팅을 변경하면 추후 ASG 인스턴스 교체 시 라우팅 블랙홀이 발생하므로
+        # get_live_instance_eni(Primary) 대신 사전 생성된 고정 Floating ENI를 보장합니다.
         if is_nat_1:
             target_rtb = ROUTE_TABLE_A_ID
-            live_eni = get_live_instance_eni(instance_id, NAT_1_ENI_ID)
+            fixed_floating_eni = NAT_1_ENI_ID
         else:
             target_rtb = ROUTE_TABLE_C_ID
-            live_eni = get_live_instance_eni(instance_id, NAT_2_ENI_ID)
+            fixed_floating_eni = NAT_2_ENI_ID
 
         logger.info(
             f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) is running and healthy. "
-            f"Reconciling Route Table {target_rtb} to Live ENI {live_eni}..."
+            f"Reconciling Route Table {target_rtb} to Fixed Floating ENI {fixed_floating_eni}..."
         )
-        result = update_route(target_rtb, live_eni)
+        result = update_route(target_rtb, fixed_floating_eni)
         return {
             "status": "RECONCILED",
             "instance_id": instance_id,
             "route_table_id": target_rtb,
-            "eni_id": live_eni,
+            "eni_id": fixed_floating_eni,
             "detail": result,
         }
 
