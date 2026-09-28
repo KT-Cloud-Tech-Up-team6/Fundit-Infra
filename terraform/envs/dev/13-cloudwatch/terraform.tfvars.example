@@ -1,0 +1,18 @@
+project_name = "fundit"
+environment  = "dev"
+
+common_tags = {
+  Project   = "Fundit"
+  Team      = "Team6"
+  ManagedBy = "Terraform"
+}
+
+# Secrets Manager에 아래 명령으로 Slack Webhook URL을 저장한 후 apply:
+# aws secretsmanager create-secret \
+#   --name fundit/dev/slack-webhook \
+#   --secret-string '{"webhook_url":"https://hooks.slack.com/services/XXX/YYY/ZZZ"}' \
+#   --profile team6-infra
+slack_webhook_secret_name = "fundit/dev/slack-webhook"
+
+# WAF WebACL 이름 (aws wafv2 list-web-acls --scope CLOUDFRONT --region us-east-1 로 확인)
+waf_web_acl_name = "fundit-dev-waf"
