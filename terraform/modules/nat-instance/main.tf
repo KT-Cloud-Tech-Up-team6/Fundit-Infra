@@ -89,13 +89,39 @@ resource "aws_eip" "nat" {
 }
 
 # 5. 프라이빗 라우팅 테이블에 0.0.0.0/0 -> 해당 AZ의 고정 ENI 연결 (2AZ HA)
-# 인스턴스가 종료되거나 새로 떠도 라우팅 테이블 타겟이 유지되어 블랙홀 방지
-# 주의: ignore_changes를 사용하면 삭제된 ENI로 인한 블랙홀을 테라폼이 감지하지 못하므로 선언적 상태를 유지합니다.
+#
+# [라우트 소유권 정책]
+# network_interface_id는 Lambda Failover가 장애 시 반대 AZ ENI로 전환하므로
+# Terraform이 drift를 감지해 원복(apply)하면 failover 효과가 즉시 취소됩니다.
+# 따라서 runtime 라우트 타겟 변경은 Lambda가 소유하고,
+# Terraform은 network_interface_id drift를 ignore합니다.
+#
+# [블랙홀 안전성 — ignore_changes가 블랙홀을 유발하지 않는 이유]
+# 과거 주석에서 "ignore_changes = 블랙홀 감지 불가" 라고 기술했으나 이는 오해입니다.
+# aws_network_interface.nat(고정 Floating ENI)는 Terraform이 관리하는 독립 리소스이며
+# ASG 인스턴스가 교체되어도 ENI 자체는 삭제되지 않습니다.
+# 따라서 정상 운영 중 ENI 블랙홀은 발생하지 않습니다.
+# ENI가 실수로 수동 삭제된 극단적 케이스는 failover.py Reconciliation 로직이
+# 인스턴스 running 이벤트 수신 시 라우트를 정상 ENI로 복구합니다.
+#
+# [01-network apply 운영 주의사항]
+# failover 중(Lambda가 라우트를 반대 AZ ENI로 전환한 상태)에도
+# apply는 network_interface_id를 건드리지 않아 egress가 유지됩니다.
+# apply 전 라우트 현황 확인 권장:
+#   aws ec2 describe-route-tables \
+#     --route-table-ids <RTB_A_ID> <RTB_C_ID> \
+#     --query 'RouteTables[].Routes[?DestinationCidrBlock==`0.0.0.0/0`]'
 resource "aws_route" "private_nat" {
   count                  = length(var.private_route_table_ids)
   route_table_id         = var.private_route_table_ids[count.index]
   destination_cidr_block = "0.0.0.0/0"
   network_interface_id   = aws_network_interface.nat[count.index].id
+
+  lifecycle {
+    # Lambda Failover가 장애 시 라우트 타겟을 반대 AZ ENI로 전환하므로
+    # Terraform의 원복 apply를 방지합니다. (라우트 소유권 정책 주석 참고)
+    ignore_changes = [network_interface_id]
+  }
 }
 
 # ----------------------------------------------------
