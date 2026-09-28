@@ -26,17 +26,17 @@ resource "aws_acm_certificate" "this" {
 # 레코드 값(resource_record_name/value)만 apply 시점에 채워진다.
 resource "aws_route53_record" "validation" {
   for_each = {
-    for dvo in aws_acm_certificate.this.domain_validation_options : dvo.resource_record_name => {
+    for dvo in aws_acm_certificate.this.domain_validation_options : dvo.domain_name => {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
-    }...
+    } if !startswith(dvo.domain_name, "*.")
   }
 
   zone_id         = var.zone_id
-  name            = each.value[0].name
-  type            = each.value[0].type
-  records         = [each.value[0].record]
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
   ttl             = 60
   allow_overwrite = true
 }
