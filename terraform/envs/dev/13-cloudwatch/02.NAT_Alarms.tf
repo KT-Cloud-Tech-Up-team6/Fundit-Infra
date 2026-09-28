@@ -2,8 +2,19 @@
 # NAT 인스턴스 CPU 사용률 알람 (NAT-1, NAT-2)
 # StatusCheckFailed 알람은 01-network의 nat-instance 모듈에 이미 존재 — 중복 방지
 # ──────────────────────────────────────────────────────────────────────────────
+locals {
+  # 01-network의 nat_asg_names(ASG Self-Healing 모드) 참조 (fallback으로 표준 명명 규칙 적용)
+  nat_asg_names = try(
+    length(data.terraform_remote_state.network.outputs.nat_asg_names) > 0 ? data.terraform_remote_state.network.outputs.nat_asg_names : null,
+    [
+      "${var.project_name}-${var.environment}-nat-asg-1",
+      "${var.project_name}-${var.environment}-nat-asg-2"
+    ]
+  )
+}
+
 resource "aws_cloudwatch_metric_alarm" "nat_cpu_high" {
-  count = length(data.terraform_remote_state.network.outputs.nat_instance_ids)
+  count = length(local.nat_asg_names)
 
   alarm_name          = "${var.project_name}-${var.environment}-nat-${count.index + 1}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
@@ -13,11 +24,11 @@ resource "aws_cloudwatch_metric_alarm" "nat_cpu_high" {
   period              = 60
   statistic           = "Average"
   threshold           = var.nat_cpu_threshold
-  alarm_description   = "NAT 인스턴스 ${count.index + 1}의 CPU 사용률이 ${var.nat_cpu_threshold}%를 3분 이상 초과했습니다. 트래픽 과부하 또는 Failover 루프를 확인하세요."
+  alarm_description   = "NAT ASG ${local.nat_asg_names[count.index]}의 CPU 사용률이 ${var.nat_cpu_threshold}%를 3분 이상 초과했습니다. 트래픽 과부하 또는 Failover 루프를 확인하세요."
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    InstanceId = data.terraform_remote_state.network.outputs.nat_instance_ids[count.index]
+    AutoScalingGroupName = local.nat_asg_names[count.index]
   }
 
   alarm_actions = [aws_sns_topic.infra_alerts.arn]

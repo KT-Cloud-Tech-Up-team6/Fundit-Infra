@@ -48,9 +48,8 @@ resource "aws_cloudwatch_metric_alarm" "media_bucket_4xx" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    BucketName  = local.media_bucket_name
-    StorageType = "AllStorageTypes"
-    FilterId    = "EntireBucket"
+    BucketName = local.media_bucket_name
+    FilterId   = "EntireBucket"
   }
 
   alarm_actions = [aws_sns_topic.infra_alerts.arn]

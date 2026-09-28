@@ -29,7 +29,7 @@ variable "slack_webhook_secret_name" {
 variable "waf_web_acl_name" {
   description = "WAF WebACL 이름 (CloudWatch 차단 요청 알람 dimension 값)"
   type        = string
-  default     = "fundit-dev-waf"
+  default     = "fundit-dev-cloudfront-waf"
 }
 
 variable "cloudfront_5xx_threshold" {
