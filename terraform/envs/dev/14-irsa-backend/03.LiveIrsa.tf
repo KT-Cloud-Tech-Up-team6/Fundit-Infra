@@ -45,38 +45,72 @@ data "aws_iam_policy_document" "live_ivs" {
     resources = ["*"]
   }
 
-  # 2. IVS 채널, 스트림키, 녹화설정 제어: 현재 AWS 계정 및 리전의 리소스 ARN으로 한정
+  # 2. IVS 채널 및 스트림키 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
+  statement {
+    sid    = "AllowIVSResourceCreation"
+    effect = "Allow"
+    actions = [
+      "ivs:CreateChannel",
+      "ivs:CreateStreamKey",
+      "ivs:TagResource",
+    ]
+    resources = [
+      "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:channel/*",
+      "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stream-key/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = [var.environment]
+    }
+  }
+
+  # 3. IVS 채널 및 스트림키 제어: dev 환경 태그가 부여된 리소스만 조작/삭제 가능 (aws:ResourceTag)
   statement {
     sid    = "AllowIVSResourceManagement"
     effect = "Allow"
     actions = [
-      "ivs:CreateChannel",
       "ivs:GetChannel",
       "ivs:UpdateChannel",
       "ivs:DeleteChannel",
       "ivs:BatchGetChannel",
-      "ivs:CreateStreamKey",
       "ivs:GetStreamKey",
       "ivs:DeleteStreamKey",
       "ivs:GetStream",
       "ivs:StopStream",
       "ivs:GetStreamSession",
       "ivs:ListStreamSessions",
-      "ivs:GetPlaybackKeyPair",
-      "ivs:GetRecordingConfiguration",
-      "ivs:TagResource",
       "ivs:UntagResource",
       "ivs:ListTagsForResource",
     ]
     resources = [
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:channel/*",
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stream-key/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = [var.environment]
+    }
+  }
+
+  # 4. IVS 녹화 설정 및 재생 키페어 읽기: 현재 계정 및 리전의 ARN 한정
+  statement {
+    sid    = "AllowIVSSharedReadOperations"
+    effect = "Allow"
+    actions = [
+      "ivs:GetPlaybackKeyPair",
+      "ivs:GetRecordingConfiguration",
+    ]
+    resources = [
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:playback-key/*",
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:recording-configuration/*",
     ]
   }
 
-  # 3. IVS Chat 목록 조회 작업: 리소스 레벨 권한을 지원하지 않는 API에 대해 wildcard 허용
+  # 5. IVS Chat 목록 조회 작업: 리소스 레벨 권한을 지원하지 않는 API에 대해 wildcard 허용
   statement {
     sid    = "AllowIVSChatListOperations"
     effect = "Allow"
@@ -87,12 +121,30 @@ data "aws_iam_policy_document" "live_ivs" {
     resources = ["*"]
   }
 
-  # 4. IVS Chat 룸 및 채팅토큰/이벤트 관리: 현재 AWS 계정 및 리전의 Room ARN으로 한정
+  # 6. IVS Chat 룸 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
+  statement {
+    sid    = "AllowIVSChatRoomCreation"
+    effect = "Allow"
+    actions = [
+      "ivschat:CreateRoom",
+      "ivschat:TagResource",
+    ]
+    resources = [
+      "arn:aws:ivschat:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:room/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = [var.environment]
+    }
+  }
+
+  # 7. IVS Chat 룸 및 채팅토큰/이벤트 관리: dev 환경 태그가 부여된 Room만 제어 가능 (aws:ResourceTag)
   statement {
     sid    = "AllowIVSChatRoomManagement"
     effect = "Allow"
     actions = [
-      "ivschat:CreateRoom",
       "ivschat:GetRoom",
       "ivschat:UpdateRoom",
       "ivschat:DeleteRoom",
@@ -100,13 +152,18 @@ data "aws_iam_policy_document" "live_ivs" {
       "ivschat:SendEvent",
       "ivschat:DisconnectUser",
       "ivschat:DeleteMessage",
-      "ivschat:TagResource",
       "ivschat:UntagResource",
       "ivschat:ListTagsForResource",
     ]
     resources = [
       "arn:aws:ivschat:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:room/*",
     ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = [var.environment]
+    }
   }
 }
 

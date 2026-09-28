@@ -45,3 +45,10 @@ variable "common_tags" {
     ManagedBy = "Terraform"
   }
 }
+
+variable "environment" {
+  description = "배포 환경 (dev, prod 등)"
+  type        = string
+  default     = "dev"
+}
+
