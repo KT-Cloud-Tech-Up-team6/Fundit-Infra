@@ -19,3 +19,8 @@ data "terraform_remote_state" "storage" {
     profile = "team6-infra"
   }
 }
+
+# 현재 AWS 계정 ID 및 리전 정보
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
