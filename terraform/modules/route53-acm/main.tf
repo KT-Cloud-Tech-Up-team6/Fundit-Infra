@@ -30,7 +30,7 @@ resource "aws_route53_record" "validation" {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
-    }
+    } if !startswith(dvo.domain_name, "*.")
   }
 
   zone_id         = var.zone_id
