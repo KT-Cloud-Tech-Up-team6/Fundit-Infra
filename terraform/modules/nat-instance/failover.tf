@@ -236,4 +236,35 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.nat_instance_state.arn
 }
 
+# 9. EventBridge: 주기적 Route Reconciliation 스케줄 (지연된 페일백 자동 복구)
+# EC2 running 또는 알람 OK 시점에 2/2 검사가 미완료되어 FAILBACK_DEFERRED로 보류된 경우,
+# 이후 2/2 검사가 완료되었을 때 우회 라우팅이 영구 잔류하지 않도록 주기적으로 대조하여 페일백을 완수합니다.
+resource "aws_cloudwatch_event_rule" "nat_periodic_reconcile" {
+  name                = "${var.project_name}-${var.environment}-nat-periodic-reconcile"
+  description         = "Periodic reconciliation rule for NAT failover route tables to recover from deferred failbacks"
+  schedule_expression = "rate(1 minute)"
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-periodic-reconcile"
+    }
+  )
+}
+
+resource "aws_cloudwatch_event_target" "lambda_periodic_reconcile" {
+  rule      = aws_cloudwatch_event_rule.nat_periodic_reconcile.name
+  target_id = "NatFailoverLambdaPeriodicReconcile"
+  arn       = aws_lambda_function.failover.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_periodic" {
+  statement_id  = "AllowExecutionFromEventBridgePeriodicReconcile"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.failover.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.nat_periodic_reconcile.arn
+}
+
+
 

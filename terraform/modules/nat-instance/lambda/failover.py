@@ -534,16 +534,79 @@ def update_route(route_table_id, target_eni_id):
             raise
 
 
+def reconcile_all_routes():
+    """
+    모든 프라이빗 라우팅 테이블(RTB-A, RTB-C)의 대상을 점검하여,
+    이전에 DEFERRED되어 우회 경로에 남아있던 라우트를 정상화된 원래 Floating ENI로 안전하게 복구합니다.
+    - RTB-A가 NAT-2(우회)를 가리키고 있는데 NAT-1이 2/2 healthy & ready이면 -> RTB-A를 NAT-1으로 페일백
+    - RTB-C가 NAT-1(우회)를 가리키고 있는데 NAT-2가 2/2 healthy & ready이면 -> RTB-C를 NAT-2로 페일백
+    """
+    results = {}
+
+    # 1. Route Table A 점검
+    current_a = get_current_nat_eni(ROUTE_TABLE_A_ID)
+    if current_a == NAT_2_ENI_ID:
+        is_ready, inst_id, reason = is_floating_eni_ready(NAT_1_ENI_ID)
+        if is_ready:
+            logger.info(
+                f"🔄 [PERIODIC RECONCILIATION] RTB-A is currently failed over to NAT-2, but NAT-1 ({inst_id}) "
+                f"is now fully healthy and ready! Restoring RTB-A -> NAT-1 ENI ({NAT_1_ENI_ID})."
+            )
+            results["route_table_a"] = update_route(ROUTE_TABLE_A_ID, NAT_1_ENI_ID)
+        else:
+            logger.info(
+                f"⏳ [PERIODIC RECONCILIATION] RTB-A remains failed over to NAT-2 because NAT-1 is not ready yet: {reason}."
+            )
+            results["route_table_a"] = {"status": "DEFERRED", "reason": reason}
+    else:
+        results["route_table_a"] = {"status": "HEALTHY", "current_eni": current_a}
+
+    # 2. Route Table C 점검
+    current_c = get_current_nat_eni(ROUTE_TABLE_C_ID)
+    if current_c == NAT_1_ENI_ID:
+        is_ready, inst_id, reason = is_floating_eni_ready(NAT_2_ENI_ID)
+        if is_ready:
+            logger.info(
+                f"🔄 [PERIODIC RECONCILIATION] RTB-C is currently failed over to NAT-1, but NAT-2 ({inst_id}) "
+                f"is now fully healthy and ready! Restoring RTB-C -> NAT-2 ENI ({NAT_2_ENI_ID})."
+            )
+            results["route_table_c"] = update_route(ROUTE_TABLE_C_ID, NAT_2_ENI_ID)
+        else:
+            logger.info(
+                f"⏳ [PERIODIC RECONCILIATION] RTB-C remains failed over to NAT-1 because NAT-2 is not ready yet: {reason}."
+            )
+            results["route_table_c"] = {"status": "DEFERRED", "reason": reason}
+    else:
+        results["route_table_c"] = {"status": "HEALTHY", "current_eni": current_c}
+
+    reconciled = any(
+        isinstance(r, dict) and r.get("status") in ["UPDATED", "CREATED"]
+        for r in results.values()
+    )
+    overall_status = "RECONCILED" if reconciled else "NOOP"
+    return {"status": overall_status, "details": results}
+
+
 def lambda_handler(event, context):
     """
     CloudWatch Alarm 및 EventBridge 이벤트를 처리합니다.
     - CloudWatch Alarm ALARM: NAT 인스턴스 장애 시 파트너 헬스체크 후 페일오버 (동시 장애 레이스 컨디션 방지)
     - CloudWatch Alarm OK: NAT 정상 복구 시 페일백
     - EventBridge EC2 state-change: NAT 신규 생성/재시작 시 최신 Live ENI로 Route Reconciliation
+    - EventBridge Scheduled Event: 지연된 페일백(FAILBACK_DEFERRED)을 주기적으로 감지하여 정상 복구
     """
     logger.info(f"Received event: {json.dumps(event)}")
 
-    # 0. EventBridge EC2 State-change Notification (Reconciliation) 확인
+    # 0-1. EventBridge 주기적 Reconciliation (Scheduled Event) 또는 ASG Launch 성공 이벤트 확인
+    if isinstance(event, dict) and (
+        (event.get("source") == "aws.events" and event.get("detail-type") == "Scheduled Event")
+        or (event.get("source") == "aws.autoscaling" and "Launch" in event.get("detail-type", ""))
+    ):
+        logger.info("🔄 Triggering periodic / lifecycle route reconciliation...")
+        res = reconcile_all_routes()
+        return {"statusCode": 200, "result": res}
+
+    # 0-2. EventBridge EC2 State-change Notification (Reconciliation) 확인
     if (
         isinstance(event, dict)
         and event.get("source") == "aws.ec2"

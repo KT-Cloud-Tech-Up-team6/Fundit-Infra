@@ -739,6 +739,169 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.mock_ec2.replace_route.assert_not_called()
         print("✅ Test 8 (Non-NAT Instance State Change Ignored): PASSED")
 
+    def test_running_deferred_ok_deferred_then_healthy_periodic_reconcile_failback(self):
+        """
+        9. [PR 리뷰 검증 시나리오]
+           EC2 running 이벤트 시 보류(DEFERRED) -> 알람 OK 시 보류(FAILBACK_DEFERRED) ->
+           2/2 정상화 후 EventBridge 주기적 Reconciliation 수신 시 최종 페일백(RECONCILED) 검증.
+        """
+        # Step 1: EC2 running 이벤트 수신 - Floating ENI가 아직 미부착(available)
+        def mock_eni_available(*args, **kwargs):
+            return {
+                "NetworkInterfaces": [
+                    {
+                        "NetworkInterfaceId": "eni-nat11111",
+                        "Status": "available",
+                        "Attachment": {"Status": "attaching"},
+                    }
+                ]
+            }
+
+        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_available
+        event_running = {
+            "source": "aws.ec2",
+            "detail-type": "EC2 Instance State-change Notification",
+            "detail": {"instance-id": "i-01111111", "state": "running"},
+        }
+        res_step1 = failover.lambda_handler(event_running, None)
+        self.assertEqual(res_step1["statusCode"], 200)
+        self.assertEqual(res_step1["result"]["status"], "DEFERRED")
+        self.mock_ec2.replace_route.assert_not_called()
+        print("  Step 1: EC2 running -> DEFERRED verified.")
+
+        # Step 2: 알람 OK 이벤트 수신 - ENI는 붙었으나 인스턴스 2/2 검사 미통과(initializing)
+        def mock_eni_attached(*args, **kwargs):
+            return {
+                "NetworkInterfaces": [
+                    {
+                        "NetworkInterfaceId": "eni-nat11111",
+                        "Status": "in-use",
+                        "Attachment": {
+                            "Status": "attached",
+                            "InstanceId": "i-01111111",
+                            "DeviceIndex": 1,
+                        },
+                    }
+                ]
+            }
+
+        def mock_status_initializing(InstanceIds, IncludeAllInstances=True):
+            return {
+                "InstanceStatuses": [
+                    {
+                        "InstanceId": InstanceIds[0],
+                        "InstanceState": {"Name": "running"},
+                        "InstanceStatus": {"Status": "initializing"},
+                        "SystemStatus": {"Status": "ok"},
+                    }
+                ]
+            }
+
+        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_attached
+        self.mock_ec2.describe_instance_status.side_effect = mock_status_initializing
+
+        event_alarm_ok = {
+            "source": "aws.cloudwatch",
+            "alarmData": {
+                "alarmName": "fundit-dev-nat-1-status-check",
+                "state": {"value": "OK"},
+            },
+        }
+        res_step2 = failover.lambda_handler(event_alarm_ok, None)
+        self.assertEqual(res_step2["result"]["status"], "FAILBACK_DEFERRED")
+        self.mock_ec2.replace_route.assert_not_called()
+        print("  Step 2: Alarm OK -> FAILBACK_DEFERRED verified (route kept on fallback).")
+
+        # Step 3: 인스턴스가 2/2 검사를 통과하여 완전히 정상화됨!
+        def mock_status_healthy(InstanceIds, IncludeAllInstances=True):
+            return {
+                "InstanceStatuses": [
+                    {
+                        "InstanceId": InstanceIds[0],
+                        "InstanceState": {"Name": "running"},
+                        "InstanceStatus": {"Status": "ok"},
+                        "SystemStatus": {"Status": "ok"},
+                    }
+                ]
+            }
+
+        self.mock_ec2.describe_instance_status.side_effect = mock_status_healthy
+
+        # 현재 RTB-A는 우회 경로(NAT-2 ENI)를 가리키고 있음
+        self.mock_ec2.describe_route_tables.return_value = {
+            "RouteTables": [
+                {
+                    "RouteTableId": "rtb-0aaa1111",
+                    "Routes": [
+                        {
+                            "DestinationCidrBlock": "0.0.0.0/0",
+                            "NetworkInterfaceId": "eni-nat22222",  # 우회 ENI
+                        }
+                    ],
+                }
+            ]
+        }
+
+        # EventBridge 주기적 Reconciliation (Scheduled Event) 발생
+        event_scheduled = {
+            "source": "aws.events",
+            "detail-type": "Scheduled Event",
+        }
+        res_step3 = failover.lambda_handler(event_scheduled, None)
+        self.assertEqual(res_step3["statusCode"], 200)
+        self.assertEqual(res_step3["result"]["status"], "RECONCILED")
+        self.mock_ec2.replace_route.assert_called_once_with(
+            RouteTableId="rtb-0aaa1111",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat11111",
+        )
+        print("  Step 3: 2/2 Healthy -> Periodic Reconcile executed final failback (RECONCILED).")
+        print("✅ Test 9 (Running -> Deferred -> Alarm OK -> Deferred -> Reconcile Failback): PASSED")
+
+    def test_user_data_script_fail_closed_on_timeout(self):
+        """
+        10. [User Data 검증]
+            60초 타임아웃 시 CONTINUE 대신 ABANDON을 전송하고 exit 1로 비정상 종료하여
+            조기 페일백 블랙홀을 원천 방지(Fail-Closed)하는지 검증
+        """
+        import base64
+        import re
+
+        main_tf_path = os.path.join(
+            os.path.dirname(__file__), "..", "main.tf"
+        )
+        with open(main_tf_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # user_data 블록 추출
+        self.assertIn("BOOTSTRAP_SUCCESS=false", content)
+        self.assertIn("ABANDON", content)
+        self.assertIn("CONTINUE", content)
+        self.assertIn("exit 1", content)
+        self.assertIn("systemctl is-active fck-nat", content)
+
+        # 실패 시 ABANDON 호출 및 exit 1 검증
+        abandon_block = re.search(
+            r'--lifecycle-action-result ABANDON.*?exit 1', content, re.DOTALL
+        )
+        self.assertIsNotNone(
+            abandon_block,
+            "User data must call complete-lifecycle-action with ABANDON and exit with code 1 on timeout",
+        )
+
+        # 성공 시에만 CONTINUE 호출 검증
+        continue_block = re.search(
+            r'if \[ "\$BOOTSTRAP_SUCCESS" = "true" \]; then.*?--lifecycle-action-result CONTINUE',
+            content,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            continue_block,
+            "User data must only send CONTINUE when BOOTSTRAP_SUCCESS is true",
+        )
+        print("✅ Test 10 (User Data Fail-Closed and Timeout ABANDON): PASSED")
+
 
 if __name__ == "__main__":
     unittest.main()
+

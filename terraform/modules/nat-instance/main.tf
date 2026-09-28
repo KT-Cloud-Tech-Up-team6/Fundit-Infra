@@ -166,23 +166,47 @@ resource "aws_launch_template" "nat" {
     INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
     REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 
-    # 4. Floating ENI(eth1) 정상 Attach 및 네트워크 링크 활성화 대기 (최대 60초)
+    # 4. Floating ENI(eth1) 정상 Attach 및 fck-nat 정상 구동 대기 (최대 60초)
+    BOOTSTRAP_SUCCESS=false
     for i in $(seq 1 30); do
+      ETH1_UP=false
       if ip link show eth1 >/dev/null 2>&1 || ip link show | grep -q "${aws_network_interface.nat[count.index].id}"; then
-        echo "Floating ENI attached successfully."
+        ETH1_UP=true
+      fi
+
+      FCK_ACTIVE=false
+      if systemctl is-active fck-nat >/dev/null 2>&1 || service fck-nat status >/dev/null 2>&1; then
+        FCK_ACTIVE=true
+      fi
+
+      if [ "$ETH1_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ]; then
+        echo "Floating ENI attached and fck-nat service is active."
+        BOOTSTRAP_SUCCESS=true
         break
       fi
       sleep 2
     done
 
-    # 5. ASG Lifecycle Action 완료 전송 (InService 전환 허용)
-    # 초기화(ENI Attach 및 fck-nat 실행) 완료 후 비로소 InService가 되어 조기 페일백 블랙홀 방지
-    aws autoscaling complete-lifecycle-action \
-      --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
-      --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
-      --lifecycle-action-result CONTINUE \
-      --instance-id "$INSTANCE_ID" \
-      --region "$REGION" || true
+    # 5. ASG Lifecycle Action 전송 (검증 성공 시 CONTINUE, 실패/타임아웃 시 ABANDON)
+    # 초기화(ENI Attach 및 fck-nat 실행) 검증 실패 시 인스턴스를 즉시 폐기(ABANDON)하여 조기 페일백 블랙홀을 원천 차단
+    if [ "$BOOTSTRAP_SUCCESS" = "true" ]; then
+      echo "Bootstrap verified successfully. Completing lifecycle action with CONTINUE."
+      aws autoscaling complete-lifecycle-action \
+        --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
+        --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
+        --lifecycle-action-result CONTINUE \
+        --instance-id "$INSTANCE_ID" \
+        --region "$REGION" || true
+    else
+      echo "ERROR: Floating ENI attach or fck-nat readiness timed out after 60s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
+      aws autoscaling complete-lifecycle-action \
+        --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
+        --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
+        --lifecycle-action-result ABANDON \
+        --instance-id "$INSTANCE_ID" \
+        --region "$REGION" || true
+      exit 1
+    fi
   EOF
   )
 
