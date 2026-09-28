@@ -170,6 +170,41 @@ def is_instance_healthy(instance_id):
         return False
 
 
+def is_floating_eni_ready(eni_id):
+    """
+    고정 Floating ENI가 인스턴스에 정상적으로 부착(attached)되어 있고,
+    해당 인스턴스가 실제로 running 및 2/2 status check를 통과(healthy)했는지 검증합니다.
+    조기 페일백(Premature Failback)으로 인한 라우팅 블랙홀을 원천 차단합니다.
+    반환값: (is_ready, instance_id, reason)
+    """
+    if not eni_id:
+        return False, None, "Floating ENI ID is empty"
+    try:
+        resp = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
+        enis = resp.get("NetworkInterfaces", [])
+        if not enis:
+            return False, None, f"Network interface {eni_id} not found"
+
+        eni = enis[0]
+        status = eni.get("Status")
+        attachment = eni.get("Attachment")
+
+        if not attachment or attachment.get("Status") != "attached":
+            return False, None, f"ENI {eni_id} status is '{status}', attachment status is not 'attached'"
+
+        instance_id = attachment.get("InstanceId")
+        if not instance_id:
+            return False, None, f"ENI {eni_id} has no attached instance ID"
+
+        if not is_instance_healthy(instance_id):
+            return False, instance_id, f"Attached instance {instance_id} is not fully healthy yet"
+
+        return True, instance_id, "Ready"
+    except Exception as e:
+        logger.error(f"Failed to check floating ENI {eni_id} readiness: {e}")
+        return False, None, str(e)
+
+
 def send_dual_failure_alert(route_table_id, target_instance_id, partner_instance_id, reason):
     """
     DUAL_FAILURE_ABORTED 발생 시 운영자 알림을 위해 SNS 토픽으로 경보 메시지를 발행합니다.
@@ -227,23 +262,9 @@ def handle_ec2_state_change(event):
     logger.info(f"Detected EC2 state-change for {nat_name} ({instance_id}): State='{state}'")
 
     # 1. 인스턴스 기동 시 Route Reconciliation
-    # EC2 running 직후에는 OS/fck-nat 초기화가 덜 끝났을 수 있으므로,
-    # is_instance_healthy()가 True일 때만 Reconcile하고 아직 준비 전이면 기존 failover 라우트를 유지합니다.
+    # EC2 running 직후에는 OS/fck-nat 초기화나 Floating ENI attach가 덜 끝났을 수 있으므로,
+    # is_floating_eni_ready()가 True일 때만 Reconcile하고 아직 준비 전이면 기존 failover 라우트를 유지합니다.
     if state == "running":
-        if not is_instance_healthy(instance_id):
-            logger.info(
-                f"⏳ [RECONCILIATION DEFERRED] {nat_name} ({instance_id}) is running but not yet fully healthy (booting/initializing). "
-                f"Keeping current route intact. CloudWatch OK event will restore the route once 2/2 status checks pass."
-            )
-            return {
-                "status": "DEFERRED",
-                "reason": f"{nat_name} is running but not yet healthy. Awaiting CloudWatch OK event.",
-                "instance_id": instance_id,
-            }
-
-        # 2-ENI 아키텍처에서 Private Route Table은 항상 고정 Secondary Floating ENI(eth1)를 타깃으로 지정해야 합니다.
-        # Primary ENI(eth0)로 라우팅을 변경하면 추후 ASG 인스턴스 교체 시 라우팅 블랙홀이 발생하므로
-        # get_live_instance_eni(Primary) 대신 사전 생성된 고정 Floating ENI를 보장합니다.
         if is_nat_1:
             target_rtb = ROUTE_TABLE_A_ID
             fixed_floating_eni = NAT_1_ENI_ID
@@ -251,8 +272,21 @@ def handle_ec2_state_change(event):
             target_rtb = ROUTE_TABLE_C_ID
             fixed_floating_eni = NAT_2_ENI_ID
 
+        is_ready, attached_inst, reason = is_floating_eni_ready(fixed_floating_eni)
+        if not is_ready:
+            logger.info(
+                f"⏳ [RECONCILIATION DEFERRED] {nat_name} ({instance_id}) is running but Floating ENI ({fixed_floating_eni}) "
+                f"is not fully ready yet: {reason}. Keeping current route intact. "
+                f"CloudWatch OK event will restore the route once ENI attach and 2/2 status checks pass."
+            )
+            return {
+                "status": "DEFERRED",
+                "reason": f"{nat_name} Floating ENI is not ready: {reason}",
+                "instance_id": instance_id,
+            }
+
         logger.info(
-            f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) is running and healthy. "
+            f"🔄 [RECONCILIATION] {nat_name} ({instance_id}) is running and Floating ENI is healthy. "
             f"Reconciling Route Table {target_rtb} to Fixed Floating ENI {fixed_floating_eni}..."
         )
         result = update_route(target_rtb, fixed_floating_eni)
@@ -613,8 +647,21 @@ def lambda_handler(event, context):
             logger.info("Triggering Failover for Route Table A -> NAT-2 ENI")
             res = update_route(ROUTE_TABLE_A_ID, live_nat_2_eni)
         elif new_state == "OK":
-            logger.info("✅ NAT-1 RECOVERED: Triggering Failback for Route Table A -> NAT-1 ENI")
-            res = update_route(ROUTE_TABLE_A_ID, live_nat_1_eni)
+            is_ready, attached_inst, reason = is_floating_eni_ready(live_nat_1_eni)
+            if not is_ready:
+                logger.warning(
+                    f"⏳ [FAILBACK DEFERRED] NAT-1 alarm is OK, but Floating ENI ({live_nat_1_eni}) "
+                    f"is not fully ready yet: {reason}. Keeping current failover route to prevent routing blackhole."
+                )
+                res = {
+                    "status": "FAILBACK_DEFERRED",
+                    "reason": reason,
+                    "eni_id": live_nat_1_eni,
+                    "instance_id": attached_inst,
+                }
+            else:
+                logger.info("✅ NAT-1 RECOVERED & VERIFIED: Triggering Failback for Route Table A -> NAT-1 ENI")
+                res = update_route(ROUTE_TABLE_A_ID, live_nat_1_eni)
         else:
             logger.info(f"NAT-1 entered state '{new_state}'. No action taken.")
             res = {"status": "IGNORED", "state": new_state}
@@ -665,8 +712,21 @@ def lambda_handler(event, context):
             logger.info("Triggering Failover for Route Table C -> NAT-1 ENI")
             res = update_route(ROUTE_TABLE_C_ID, live_nat_1_eni)
         elif new_state == "OK":
-            logger.info("✅ NAT-2 RECOVERED: Triggering Failback for Route Table C -> NAT-2 ENI")
-            res = update_route(ROUTE_TABLE_C_ID, live_nat_2_eni)
+            is_ready, attached_inst, reason = is_floating_eni_ready(live_nat_2_eni)
+            if not is_ready:
+                logger.warning(
+                    f"⏳ [FAILBACK DEFERRED] NAT-2 alarm is OK, but Floating ENI ({live_nat_2_eni}) "
+                    f"is not fully ready yet: {reason}. Keeping current failover route to prevent routing blackhole."
+                )
+                res = {
+                    "status": "FAILBACK_DEFERRED",
+                    "reason": reason,
+                    "eni_id": live_nat_2_eni,
+                    "instance_id": attached_inst,
+                }
+            else:
+                logger.info("✅ NAT-2 RECOVERED & VERIFIED: Triggering Failback for Route Table C -> NAT-2 ENI")
+                res = update_route(ROUTE_TABLE_C_ID, live_nat_2_eni)
         else:
             logger.info(f"NAT-2 entered state '{new_state}'. No action taken.")
             res = {"status": "IGNORED", "state": new_state}

@@ -93,6 +93,27 @@ class TestNatFailoverLambda(unittest.TestCase):
 
         self.mock_ec2.describe_instance_status.side_effect = default_describe_instance_status
 
+        # 기본 Floating ENI 상태 모의 (정상 in-use 및 attached)
+        def default_describe_network_interfaces(*args, **kwargs):
+            eni_ids = kwargs.get("NetworkInterfaceIds", [])
+            eni_id = eni_ids[0] if eni_ids else "eni-default"
+            inst_id = "i-01111111" if eni_id == "eni-nat11111" else "i-02222222"
+            return {
+                "NetworkInterfaces": [
+                    {
+                        "NetworkInterfaceId": eni_id,
+                        "Status": "in-use",
+                        "Attachment": {
+                            "Status": "attached",
+                            "InstanceId": inst_id,
+                            "DeviceIndex": 1,
+                        },
+                    }
+                ]
+            }
+
+        self.mock_ec2.describe_network_interfaces.side_effect = default_describe_network_interfaces
+
     def test_direct_invoke_alarm_failover(self):
         """1. CloudWatch Alarm 직접 호출 페이로드 파싱 및 파트너 정상 시 페일오버(Route Table A -> NAT-2) 검증"""
         event = {
@@ -207,6 +228,89 @@ class TestNatFailoverLambda(unittest.TestCase):
             NetworkInterfaceId="eni-nat11111",
         )
         print("✅ Test 2 (Direct Invoke OK -> Failback): PASSED")
+
+    def test_direct_invoke_ok_failback_deferred_when_eni_not_attached(self):
+        """2-1. [조기 페일백 방지] 알람 OK 수신 시 Floating ENI가 아직 미부착(available) 상태이면 페일백 보류 및 라우트 유지 검증"""
+        event = {
+            "source": "aws.cloudwatch",
+            "alarmData": {
+                "alarmName": "fundit-dev-nat-1-status-check",
+                "state": {"value": "OK"},
+                "configuration": {
+                    "metrics": [
+                        {
+                            "metricStat": {
+                                "metric": {
+                                    "dimensions": {"InstanceId": "i-01111111"}
+                                }
+                            }
+                        }
+                    ]
+                },
+            },
+        }
+
+        # Floating ENI가 아직 인스턴스에 붙지 않음 (user-data 부팅 초기 단계)
+        self.mock_ec2.describe_network_interfaces.side_effect = None
+        self.mock_ec2.describe_network_interfaces.return_value = {
+            "NetworkInterfaces": [
+                {
+                    "NetworkInterfaceId": "eni-nat11111",
+                    "Status": "available",
+                    "Attachment": None,
+                }
+            ]
+        }
+
+        result = failover.lambda_handler(event, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(result["result"]["status"], "FAILBACK_DEFERRED")
+        self.assertIn("not 'attached'", result["result"]["reason"])
+        self.mock_ec2.replace_route.assert_not_called()
+        print("✅ Test 2-1 (Failback Deferred when Floating ENI Not Attached): PASSED")
+
+    def test_direct_invoke_ok_failback_deferred_when_instance_unhealthy(self):
+        """2-2. [조기 페일백 방지] 알람 OK 수신 시 ENI는 붙었으나 인스턴스가 2/2 통과 전(부팅 중)이면 페일백 보류 검증"""
+        event = {
+            "source": "aws.cloudwatch",
+            "alarmData": {
+                "alarmName": "fundit-dev-nat-1-status-check",
+                "state": {"value": "OK"},
+                "configuration": {
+                    "metrics": [
+                        {
+                            "metricStat": {
+                                "metric": {
+                                    "dimensions": {"InstanceId": "i-01111111"}
+                                }
+                            }
+                        }
+                    ]
+                },
+            },
+        }
+
+        # ENI는 붙었으나 인스턴스 상태가 아직 initializing
+        self.mock_ec2.describe_instance_status.side_effect = None
+        self.mock_ec2.describe_instance_status.return_value = {
+            "InstanceStatuses": [
+                {
+                    "InstanceId": "i-01111111",
+                    "InstanceState": {"Name": "running"},
+                    "InstanceStatus": {"Status": "initializing"},
+                    "SystemStatus": {"Status": "ok"},
+                }
+            ]
+        }
+
+        result = failover.lambda_handler(event, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(result["result"]["status"], "FAILBACK_DEFERRED")
+        self.assertIn("not fully healthy yet", result["result"]["reason"])
+        self.mock_ec2.replace_route.assert_not_called()
+        print("✅ Test 2-2 (Failback Deferred when Attached Instance Unhealthy): PASSED")
 
     def test_partner_route_recovered_when_partner_healthy(self):
         """3. 상대 라우트가 NAT-1을 가리켜도 NAT-2가 실제로 healthy라면 상대 라우트 복구 후 정상 Failover 검증"""
@@ -455,6 +559,21 @@ class TestNatFailoverLambda(unittest.TestCase):
             ]
         }
 
+        self.mock_ec2.describe_network_interfaces.side_effect = None
+        self.mock_ec2.describe_network_interfaces.return_value = {
+            "NetworkInterfaces": [
+                {
+                    "NetworkInterfaceId": "eni-nat11111",
+                    "Status": "in-use",
+                    "Attachment": {
+                        "Status": "attached",
+                        "InstanceId": "i-new-99999",
+                        "DeviceIndex": 1,
+                    },
+                }
+            ]
+        }
+
 
         result = failover.lambda_handler(event, None)
 
@@ -512,6 +631,21 @@ class TestNatFailoverLambda(unittest.TestCase):
                             "NetworkInterfaceId": "eni-nat11111",  # failover 되어 있던 상태
                         }
                     ]
+                }
+            ]
+        }
+
+        self.mock_ec2.describe_network_interfaces.side_effect = None
+        self.mock_ec2.describe_network_interfaces.return_value = {
+            "NetworkInterfaces": [
+                {
+                    "NetworkInterfaceId": "eni-nat22222",
+                    "Status": "in-use",
+                    "Attachment": {
+                        "Status": "attached",
+                        "InstanceId": "i-new-nat2",
+                        "DeviceIndex": 1,
+                    },
                 }
             ]
         }

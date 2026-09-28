@@ -149,11 +149,40 @@ resource "aws_launch_template" "nat" {
   # fck-nat 공식 HA 아키텍처:
   # 1) eni_id: 프라이빗 라우팅 타깃인 고정 보조 ENI를 eth1(수신용)로 attach
   # 2) eip_id: 실제 인터넷 송신 인터페이스인 Primary ENI(eth0)에 고정 EIP를 associate
+  # 3) Lifecycle Hook 완료: 부트스트랩 완료 전 InService 전환 및 조기 페일백 방지
   user_data = base64encode(<<-EOF
     #!/bin/sh
+    set -e
+
+    # 1. fck-nat 구성 파일 작성
     echo "eni_id=${aws_network_interface.nat[count.index].id}" > /etc/fck-nat.conf
     echo "eip_id=${aws_eip.nat[count.index].id}" >> /etc/fck-nat.conf
+
+    # 2. fck-nat 서비스 재시작
     systemctl restart fck-nat || service fck-nat restart
+
+    # 3. IMDSv2 토큰 및 인스턴스/리전 메타데이터 조회
+    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+    INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+    REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+
+    # 4. Floating ENI(eth1) 정상 Attach 및 네트워크 링크 활성화 대기 (최대 60초)
+    for i in $(seq 1 30); do
+      if ip link show eth1 >/dev/null 2>&1 || ip link show | grep -q "${aws_network_interface.nat[count.index].id}"; then
+        echo "Floating ENI attached successfully."
+        break
+      fi
+      sleep 2
+    done
+
+    # 5. ASG Lifecycle Action 완료 전송 (InService 전환 허용)
+    # 초기화(ENI Attach 및 fck-nat 실행) 완료 후 비로소 InService가 되어 조기 페일백 블랙홀 방지
+    aws autoscaling complete-lifecycle-action \
+      --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
+      --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
+      --lifecycle-action-result CONTINUE \
+      --instance-id "$INSTANCE_ID" \
+      --region "$REGION" || true
   EOF
   )
 
@@ -253,4 +282,19 @@ resource "aws_autoscaling_group" "nat" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# ----------------------------------------------------
+# 8. ASG Launch Lifecycle Hook (조기 페일백 및 블랙홀 방지)
+# 인스턴스 부팅 후 fck-nat 초기화, 고정 Floating ENI(eth1) Attach,
+# 고정 EIP 바인딩이 100% 완료되기 전까지 ASG가 InService로 전환되는 것을 보류합니다.
+# AWS 공식 권장: 부트스트랩 완료 전 트래픽 유입 및 InService 승격 방지
+# ----------------------------------------------------
+resource "aws_autoscaling_lifecycle_hook" "nat_launch" {
+  count                  = length(var.public_subnet_ids)
+  name                   = "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook"
+  autoscaling_group_name = aws_autoscaling_group.nat[count.index].name
+  default_result         = "ABANDON"
+  heartbeat_timeout      = 300
+  lifecycle_transition   = "autoscaling:EC2_INSTANCE_LAUNCHING"
 }

@@ -46,6 +46,15 @@ resource "aws_iam_policy" "nat_instance" {
           "ec2:DisassociateAddress"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "AutoScalingLifecycle"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:CompleteLifecycleAction",
+          "autoscaling:RecordLifecycleActionHeartbeat"
+        ]
+        Resource = "*"
       }
     ]
   })
