@@ -28,9 +28,24 @@ class TestNatFailoverLambda(unittest.TestCase):
         failover.NAT_1_TAG_NAME = "fundit-dev-nat-1"
         failover.NAT_2_TAG_NAME = "fundit-dev-nat-2"
 
-        # 기본 인스턴스 정보 모의 (태그 포함)
-        def default_describe_instances(InstanceIds):
-            inst_id = InstanceIds[0]
+        # 기본 인스턴스 정보 모의 (InstanceIds 및 Filters 모두 지원)
+        def default_describe_instances(*args, **kwargs):
+            inst_id = None
+            tag_name = None
+
+            if "InstanceIds" in kwargs and kwargs["InstanceIds"]:
+                inst_id = kwargs["InstanceIds"][0]
+            elif "Filters" in kwargs and kwargs["Filters"]:
+                for f in kwargs["Filters"]:
+                    if f.get("Name") == "tag:Name" and f.get("Values"):
+                        tag_name = f["Values"][0]
+                        if tag_name == "fundit-dev-nat-1":
+                            inst_id = "i-01111111"
+                        elif tag_name == "fundit-dev-nat-2":
+                            inst_id = "i-02222222"
+            elif args and args[0]:
+                inst_id = args[0][0]
+
             if inst_id == "i-01111111":
                 eni_id = "eni-nat11111"
                 tag_name = "fundit-dev-nat-1"
@@ -39,14 +54,15 @@ class TestNatFailoverLambda(unittest.TestCase):
                 tag_name = "fundit-dev-nat-2"
             else:
                 eni_id = "eni-unknown"
-                tag_name = "some-other-instance"
+                tag_name = tag_name or "some-other-instance"
 
             return {
                 "Reservations": [
                     {
                         "Instances": [
                             {
-                                "InstanceId": inst_id,
+                                "InstanceId": inst_id or "i-unknown",
+                                "State": {"Name": "running"},
                                 "Tags": [{"Key": "Name", "Value": tag_name}],
                                 "NetworkInterfaces": [
                                     {
@@ -446,13 +462,73 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.assertEqual(result["result"]["status"], "RECONCILED")
         self.assertEqual(result["result"]["instance_id"], "i-new-99999")
         self.assertEqual(result["result"]["route_table_id"], "rtb-0aaa1111")
-        self.assertEqual(result["result"]["eni_id"], "eni-new-live-99999")
+        self.assertEqual(result["result"]["eni_id"], "eni-nat11111")
         self.mock_ec2.replace_route.assert_called_once_with(
             RouteTableId="rtb-0aaa1111",
             DestinationCidrBlock="0.0.0.0/0",
-            NetworkInterfaceId="eni-new-live-99999",
+            NetworkInterfaceId="eni-nat11111",
         )
-        print("✅ Test 6 (Tag-based Route Reconciliation on Instance Recreation): PASSED")
+        print("✅ Test 6-2 (NAT-1 Running State Reconcile with Fixed Floating ENI): PASSED")
+
+    def test_ec2_running_state_reconciliation_nat2(self):
+        """6-3. [NAT-2 복구 대응] NAT-2 running 수신 시 고정 Floating ENI(NAT_2_ENI_ID)로 RTB-C 라우팅 복구 검증"""
+        event = {
+            "version": "0",
+            "id": "12345678-1234-1234-1234-123456789013",
+            "detail-type": "EC2 Instance State-change Notification",
+            "source": "aws.ec2",
+            "detail": {
+                "instance-id": "i-new-nat2",
+                "state": "running",
+            },
+        }
+
+        self.mock_ec2.describe_instances.side_effect = None
+        self.mock_ec2.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-new-nat2",
+                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-2"}],
+                            "NetworkInterfaces": [
+                                {
+                                    "Attachment": {"DeviceIndex": 0},
+                                    "NetworkInterfaceId": "eni-dynamic-live-nat2",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        self.mock_ec2.describe_route_tables.return_value = {
+            "RouteTables": [
+                {
+                    "Routes": [
+                        {
+                            "DestinationCidrBlock": "0.0.0.0/0",
+                            "NetworkInterfaceId": "eni-nat11111",  # failover 되어 있던 상태
+                        }
+                    ]
+                }
+            ]
+        }
+
+        result = failover.lambda_handler(event, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(result["result"]["status"], "RECONCILED")
+        self.assertEqual(result["result"]["instance_id"], "i-new-nat2")
+        self.assertEqual(result["result"]["route_table_id"], "rtb-0ccc2222")
+        self.assertEqual(result["result"]["eni_id"], "eni-nat22222")
+        self.mock_ec2.replace_route.assert_called_once_with(
+            RouteTableId="rtb-0ccc2222",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat22222",
+        )
+        print("✅ Test 6-3 (NAT-2 Running State Reconcile with Fixed Floating ENI): PASSED")
 
     def test_ec2_stopped_state_fast_failover(self):
         """7. [중지 대응] NAT-1 stopped 이벤트 수신 시 즉시 RTB-A -> NAT-2로 빠른 Failover 트리거 검증"""
