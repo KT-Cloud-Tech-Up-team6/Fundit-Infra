@@ -59,6 +59,9 @@ data "aws_iam_policy_document" "live_ivs" {
       "ivs:UntagResource",
       "ivs:ListTagsForResource",
     ]
+    # IVS 채널과 IVS Chat 룸은 라이브 방송마다 동적으로 생성/삭제되어
+    # 사전에 ARN을 특정할 수 없으므로 resource를 * 로 설정한다.
+    # 향후 태그 기반(aws:ResourceTag/Project=Fundit) 조건 추가를 권장한다.
     resources = ["*"]
   }
 
@@ -80,6 +83,9 @@ data "aws_iam_policy_document" "live_ivs" {
       "ivschat:UntagResource",
       "ivschat:ListTagsForResource",
     ]
+    # IVS 채널과 IVS Chat 룸은 라이브 방송마다 동적으로 생성/삭제되어
+    # 사전에 ARN을 특정할 수 없으므로 resource를 * 로 설정한다.
+    # 향후 태그 기반(aws:ResourceTag/Project=Fundit) 조건 추가를 권장한다.
     resources = ["*"]
   }
 }
