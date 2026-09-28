@@ -56,9 +56,13 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_response_time" {
 }
 
 # ALB Unhealthy Host 알람
-# Unhealthy 타겟이 1개라도 있으면 즉시 알림 — 서비스 가용성 저하 선제 탐지
+# CloudWatch UnHealthyHostCount 메트릭은 LoadBalancer와 TargetGroup 두 dimension 조합으로만 발행됩니다.
+# LoadBalancer 단독 지정 시 데이터가 발행되지 않는 문제를 해결하기 위해, 타겟 그룹별(frontend, gateway)로 알람을 생성합니다.
+# Unhealthy 타겟이 1개라도 발생하면 즉시 슬랙 알림 — 서비스 가용성 저하 선제 탐지
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_host_count" {
-  alarm_name          = "${var.project_name}-${var.environment}-alb-unhealthy-host"
+  for_each = data.aws_lb_target_group.eks
+
+  alarm_name          = "${var.project_name}-${var.environment}-alb-${each.key}-unhealthy-host"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "UnHealthyHostCount"
@@ -66,17 +70,19 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_host_count" {
   period              = 60
   statistic           = "Maximum"
   threshold           = 0
-  alarm_description   = "ALB 타겟 그룹에 Unhealthy 타겟이 발생했습니다. EKS 파드 재시작 또는 헬스체크 실패를 확인하세요."
+  alarm_description   = "ALB 타겟 그룹(${each.key}: ${each.value.name})에 Unhealthy 타겟이 발생했습니다. EKS 파드 재시작 또는 헬스체크 실패를 확인하세요."
   treat_missing_data  = "notBreaching"
 
   dimensions = {
     LoadBalancer = data.aws_lb.eks_alb.arn_suffix
+    TargetGroup  = each.value.arn_suffix
   }
 
   alarm_actions = [aws_sns_topic.infra_alerts.arn]
   ok_actions    = [aws_sns_topic.infra_alerts.arn]
 
   tags = merge(var.common_tags, {
-    Name = "${var.project_name}-${var.environment}-alb-unhealthy-host"
+    Name = "${var.project_name}-${var.environment}-alb-${each.key}-unhealthy-host"
   })
 }
+

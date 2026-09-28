@@ -50,6 +50,24 @@ data "aws_lb" "eks_alb" {
   }
 }
 
+locals {
+  alb_target_groups = {
+    frontend = "dev/fundit-fundit-frontend-svc:80"
+    gateway  = "dev/fundit-fundit-gateway-svc:8080"
+  }
+}
+
+# EKS Ingress ALB 타겟 그룹 — UnHealthyHostCount 알람 dimension(TargetGroup) 값 조회
+data "aws_lb_target_group" "eks" {
+  for_each = local.alb_target_groups
+
+  tags = {
+    "elbv2.k8s.aws/cluster"   = "${var.project_name}-${var.environment}-eks"
+    "ingress.k8s.aws/resource" = each.value
+  }
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
+
