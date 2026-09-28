@@ -12,3 +12,13 @@ output "ai_s3_role_name" {
   description = "AI ServiceAccount에 연결된 IAM Role 이름"
   value       = aws_iam_role.ai_s3.name
 }
+
+output "live_ivs_role_arn" {
+  description = "Live ServiceAccount에 연결할 IAM Role ARN. Fundit-GitOps의 ServiceAccount annotation에서 참조한다"
+  value       = aws_iam_role.live_ivs.arn
+}
+
+output "live_ivs_role_name" {
+  description = "Live ServiceAccount에 연결된 IAM Role 이름"
+  value       = aws_iam_role.live_ivs.name
+}
