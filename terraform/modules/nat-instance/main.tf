@@ -166,7 +166,8 @@ resource "aws_launch_template" "nat" {
     INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
     REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 
-    # 4. Floating ENI(eth1) 정상 Attach 및 fck-nat 정상 구동 대기 (최대 60초)
+    # 4. Floating ENI(eth1) Attach, fck-nat 서비스 구동 및 고정 EIP(AllocationId) 바인딩 대기 (최대 60초)
+    TARGET_EIP_ALLOC="${aws_eip.nat[count.index].id}"
     BOOTSTRAP_SUCCESS=false
     for i in $(seq 1 30); do
       ETH1_UP=false
@@ -179,8 +180,20 @@ resource "aws_launch_template" "nat" {
         FCK_ACTIVE=true
       fi
 
-      if [ "$ETH1_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ]; then
-        echo "Floating ENI attached and fck-nat service is active."
+      # eth0에 fck-nat가 고정 EIP(${aws_eip.nat[count.index].id})를 바인딩했는지 AWS API로 직접 검증
+      # associate_public_ip_address로 할당된 임시 공인 IP와의 혼동을 방지하기 위해 AllocationId를 확인
+      EIP_BOUND=false
+      CURRENT_ALLOC=$(aws ec2 describe-instances \
+        --instance-ids "$INSTANCE_ID" \
+        --region "$REGION" \
+        --query "Reservations[0].Instances[0].NetworkInterfaces[?Attachment.DeviceIndex==\`0\`].Association.AllocationId" \
+        --output text 2>/dev/null || true)
+      if [ "$CURRENT_ALLOC" = "$TARGET_EIP_ALLOC" ]; then
+        EIP_BOUND=true
+      fi
+
+      if [ "$ETH1_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ] && [ "$EIP_BOUND" = "true" ]; then
+        echo "Floating ENI attached, fck-nat service is active, and static EIP ($TARGET_EIP_ALLOC) is associated."
         BOOTSTRAP_SUCCESS=true
         break
       fi
@@ -188,7 +201,7 @@ resource "aws_launch_template" "nat" {
     done
 
     # 5. ASG Lifecycle Action 전송 (검증 성공 시 CONTINUE, 실패/타임아웃 시 ABANDON)
-    # 초기화(ENI Attach 및 fck-nat 실행) 검증 실패 시 인스턴스를 즉시 폐기(ABANDON)하여 조기 페일백 블랙홀을 원천 차단
+    # 초기화(ENI Attach, fck-nat 실행, 고정 EIP 바인딩) 검증 실패 시 인스턴스를 즉시 폐기(ABANDON)하여 조기 페일백 블랙홀을 원천 차단
     if [ "$BOOTSTRAP_SUCCESS" = "true" ]; then
       echo "Bootstrap verified successfully. Completing lifecycle action with CONTINUE."
       aws autoscaling complete-lifecycle-action \
@@ -198,7 +211,7 @@ resource "aws_launch_template" "nat" {
         --instance-id "$INSTANCE_ID" \
         --region "$REGION" || true
     else
-      echo "ERROR: Floating ENI attach or fck-nat readiness timed out after 60s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
+      echo "ERROR: Floating ENI attach, fck-nat readiness, or static EIP ($TARGET_EIP_ALLOC) binding timed out after 60s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
       aws autoscaling complete-lifecycle-action \
         --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
         --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \

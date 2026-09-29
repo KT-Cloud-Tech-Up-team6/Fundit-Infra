@@ -22,6 +22,8 @@ NAT_1_INSTANCE_ID = os.environ.get("NAT_1_INSTANCE_ID")
 NAT_2_INSTANCE_ID = os.environ.get("NAT_2_INSTANCE_ID")
 NAT_1_TAG_NAME = os.environ.get("NAT_1_TAG_NAME", "fundit-dev-nat-1")
 NAT_2_TAG_NAME = os.environ.get("NAT_2_TAG_NAME", "fundit-dev-nat-2")
+NAT_1_EIP_ALLOC_ID = os.environ.get("NAT_1_EIP_ALLOC_ID")
+NAT_2_EIP_ALLOC_ID = os.environ.get("NAT_2_EIP_ALLOC_ID")
 ALERT_SNS_TOPIC_ARN = os.environ.get("ALERT_SNS_TOPIC_ARN")
 
 
@@ -177,18 +179,19 @@ def is_instance_asg_inservice(instance_id):
     인스턴스가 Auto Scaling Group에 속해 있는 경우,
     LifecycleState가 'InService'인지 검증합니다.
     (Pending:Wait 상태 등 부트스트랩/Lifecycle Hook 미완료 시 조기 페일백 방지)
-    ASG에 속해있지 않은 독립 인스턴스인 경우 True를 반환합니다.
+    NAT 인스턴스는 ASG 관리가 전제이므로, ASG 미등록 또는 조회 결과가 빈 경우
+    Fail-closed(False)로 처리하여 조기 페일백 가드를 유지합니다.
     """
     if not instance_id:
-        return True, "No instance ID"
+        return False, "No instance ID"
     try:
         resp = autoscaling_client.describe_auto_scaling_instances(
             InstanceIds=[instance_id]
         )
         asg_instances = resp.get("AutoScalingInstances", [])
         if not asg_instances:
-            # ASG 관리 대상이 아니면 ASG 검사는 통과 (독립 인스턴스)
-            return True, "Not managed by ASG"
+            # ASG 관리가 전제이므로 미등록 인스턴스는 Fail-closed 처리하여 조기 페일백 가드 유지
+            return False, f"Instance {instance_id} is not registered in any ASG"
 
         asg_inst = asg_instances[0]
         lifecycle_state = asg_inst.get("LifecycleState")
@@ -202,13 +205,14 @@ def is_instance_asg_inservice(instance_id):
         return False, f"ASG query error: {e}"
 
 
-def is_instance_eip_ready(instance_id):
+def is_instance_eip_ready(instance_id, expected_allocation_id=None):
     """
-    인스턴스의 Primary ENI(eth0) 또는 인스턴스에 Elastic IP(공인 IP)가 정상 연결되어 있는지 검증합니다.
-    fck-nat 서비스가 부팅 시 EIP를 바인딩(associate-address)하기 전 조기 페일백을 방지합니다.
+    인스턴스의 Primary ENI(eth0)에 Elastic IP(고정 EIP)가 정상 연결되어 있는지 검증합니다.
+    Launch Template의 associate_public_ip_address=true로 인해 자동 할당된 임시 공인 IP는
+    AllocationId가 없으므로 이를 배제하고, fck-nat가 고정 EIP를 associate 완료했는지 판정합니다.
     """
     if not instance_id:
-        return True, "No instance ID"
+        return False, "No instance ID"
     try:
         resp = ec2_client.describe_instances(InstanceIds=[instance_id])
         reservations = resp.get("Reservations", [])
@@ -216,19 +220,30 @@ def is_instance_eip_ready(instance_id):
             return False, f"Instance {instance_id} not found"
 
         inst = reservations[0]["Instances"][0]
-        # 1. 인스턴스 수준 PublicIpAddress 확인
-        public_ip = inst.get("PublicIpAddress")
-        if public_ip:
-            return True, f"EIP associated ({public_ip})"
-
-        # 2. eth0 NetworkInterface의 Association 확인
+        # eth0 NetworkInterface의 Association에서 AllocationId 확인
         for iface in inst.get("NetworkInterfaces", []):
             if iface.get("Attachment", {}).get("DeviceIndex") == 0:
                 assoc = iface.get("Association", {})
-                if assoc.get("PublicIp"):
-                    return True, f"EIP associated on eth0 ({assoc.get('PublicIp')})"
+                alloc_id = assoc.get("AllocationId")
+                public_ip = assoc.get("PublicIp")
 
-        return False, f"Instance {instance_id} has no public IP/EIP associated yet"
+                if not alloc_id:
+                    if public_ip:
+                        return False, (
+                            f"Instance {instance_id} eth0 has auto-assigned public IP ({public_ip}) "
+                            f"but static EIP (AllocationId) is not associated yet"
+                        )
+                    return False, f"Instance {instance_id} eth0 has no public IP/EIP associated yet"
+
+                if expected_allocation_id and alloc_id != expected_allocation_id:
+                    return False, (
+                        f"Instance {instance_id} eth0 EIP AllocationId '{alloc_id}' does not match "
+                        f"expected static AllocationId '{expected_allocation_id}'"
+                    )
+
+                return True, f"Static EIP associated on eth0 (AllocationId: {alloc_id}, PublicIp: {public_ip})"
+
+        return False, f"Instance {instance_id} has no eth0 (DeviceIndex 0) interface found"
     except Exception as e:
         logger.warning(f"Failed to check EIP status for {instance_id}: {e}")
         return False, f"EIP query error: {e}"
@@ -270,8 +285,14 @@ def is_floating_eni_ready(eni_id):
         if not asg_ready:
             return False, instance_id, asg_reason
 
-        # 3. NAT/EIP 바인딩 완료 여부 검증 (Primary ENI에 공인 IP/EIP 연결 확인)
-        eip_ready, eip_reason = is_instance_eip_ready(instance_id)
+        # 3. NAT/EIP 바인딩 완료 여부 검증 (Primary ENI에 고정 EIP AllocationId 연결 확인)
+        expected_alloc_id = None
+        if eni_id == NAT_1_ENI_ID:
+            expected_alloc_id = NAT_1_EIP_ALLOC_ID
+        elif eni_id == NAT_2_ENI_ID:
+            expected_alloc_id = NAT_2_EIP_ALLOC_ID
+
+        eip_ready, eip_reason = is_instance_eip_ready(instance_id, expected_allocation_id=expected_alloc_id)
         if not eip_ready:
             return False, instance_id, eip_reason
 

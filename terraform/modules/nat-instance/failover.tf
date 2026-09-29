@@ -118,6 +118,8 @@ resource "aws_lambda_function" "failover" {
       ROUTE_TABLE_C_ID    = var.private_route_table_ids[1]
       NAT_1_ENI_ID        = aws_network_interface.nat[0].id
       NAT_2_ENI_ID        = aws_network_interface.nat[1].id
+      NAT_1_EIP_ALLOC_ID  = aws_eip.nat[0].id
+      NAT_2_EIP_ALLOC_ID  = aws_eip.nat[1].id
       NAT_1_INSTANCE_ID   = ""
       NAT_2_INSTANCE_ID   = ""
       NAT_1_TAG_NAME      = "${var.project_name}-${var.environment}-nat-1"

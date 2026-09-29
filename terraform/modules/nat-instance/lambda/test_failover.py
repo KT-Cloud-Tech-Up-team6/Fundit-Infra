@@ -29,6 +29,8 @@ class TestNatFailoverLambda(unittest.TestCase):
         )
         failover.NAT_1_TAG_NAME = "fundit-dev-nat-1"
         failover.NAT_2_TAG_NAME = "fundit-dev-nat-2"
+        failover.NAT_1_EIP_ALLOC_ID = "eipalloc-11111"
+        failover.NAT_2_EIP_ALLOC_ID = "eipalloc-22222"
 
         # 기본 인스턴스 정보 모의 (InstanceIds 및 Filters 모두 지원)
         def default_describe_instances(*args, **kwargs):
@@ -52,14 +54,17 @@ class TestNatFailoverLambda(unittest.TestCase):
                 eni_id = "eni-nat11111"
                 tag_name = "fundit-dev-nat-1"
                 public_ip = "54.180.1.1"
+                alloc_id = "eipalloc-11111"
             elif inst_id == "i-02222222":
                 eni_id = "eni-nat22222"
                 tag_name = "fundit-dev-nat-2"
                 public_ip = "54.180.2.2"
+                alloc_id = "eipalloc-22222"
             else:
                 eni_id = "eni-unknown"
                 tag_name = tag_name or "some-other-instance"
                 public_ip = "54.180.9.9"
+                alloc_id = "eipalloc-99999"
 
             return {
                 "Reservations": [
@@ -74,7 +79,11 @@ class TestNatFailoverLambda(unittest.TestCase):
                                     {
                                         "Attachment": {"DeviceIndex": 0},
                                         "NetworkInterfaceId": eni_id,
-                                        "Association": {"PublicIp": public_ip},
+                                        "Association": {
+                                            "PublicIp": public_ip,
+                                            "AllocationId": alloc_id,
+                                            "AssociationId": f"eipassoc-{alloc_id[8:]}",
+                                        },
                                     }
                                 ],
                             }
@@ -561,7 +570,10 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-new-live-99999",
-                                    "Association": {"PublicIp": "54.180.1.1"},
+                                    "Association": {
+                                        "PublicIp": "54.180.1.1",
+                                        "AllocationId": "eipalloc-11111",
+                                    },
                                 }
                             ],
                         }
@@ -639,7 +651,10 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-dynamic-live-nat2",
-                                    "Association": {"PublicIp": "54.180.2.2"},
+                                    "Association": {
+                                        "PublicIp": "54.180.2.2",
+                                        "AllocationId": "eipalloc-22222",
+                                    },
                                 }
                             ],
                         }
@@ -1058,7 +1073,10 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-primary-1",
-                                    "Association": {"PublicIp": "54.180.1.1"},
+                                    "Association": {
+                                        "PublicIp": "54.180.1.1",
+                                        "AllocationId": "eipalloc-11111",
+                                    },
                                 }
                             ],
                         }
@@ -1114,7 +1132,16 @@ class TestNatFailoverLambda(unittest.TestCase):
             # mock aws CLI
             aws_mock = os.path.join(bin_dir, "aws")
             with open(aws_mock, "w") as f:
-                f.write('#!/bin/sh\necho "$@" >> "' + log_file + '"\nexit 0\n')
+                f.write(
+                    '#!/bin/sh\n'
+                    'echo "$@" >> "' + log_file + '"\n'
+                    'case "$*" in\n'
+                    '  *describe-instances*)\n'
+                    '    echo "mock-value"\n'
+                    '    ;;\n'
+                    'esac\n'
+                    'exit 0\n'
+                )
             os.chmod(aws_mock, os.stat(aws_mock).st_mode | stat.S_IEXEC)
 
             # mock curl (IMDSv2)
@@ -1216,6 +1243,144 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.assertEqual(reason_ok, "Ready")
         print("  Step 3: Permission granted -> is_floating_eni_ready returns True.")
         print("✅ Test 13 (Lambda IAM Policy, Role Attachment & Runtime AccessDenied Handling): PASSED")
+
+    def test_auto_assigned_public_ip_without_static_eip_deferred(self):
+        """
+        14. [PR 리뷰 검증 - 고정 EIP 준비 판정 강화]
+            Launch Template의 associate_public_ip_address = true로 인해 임시 공인 IP만 있고,
+            fck-nat에 의한 고정 EIP(AllocationId)가 아직 바인딩되지 않은 경우:
+            1) is_instance_eip_ready()가 False 및 임시 공인 IP 안내 사유를 반환하는지 검증
+            2) is_floating_eni_ready()가 False를 반환하여 조기 페일백이 방지되는지 검증
+            3) 알람 OK 및 Reconcile 이벤트 수신 시 FAILBACK_DEFERRED / DEFERRED로 안전 보류되는지 검증
+            4) fck-nat가 고정 EIP(AllocationId)를 연결하면 정상적으로 Ready 및 페일백/Reconcile되는지 검증
+        """
+        # Step 1: 임시 자동 할당 공인 IP만 존재 (AllocationId 없음)
+        self.mock_ec2.describe_instances.side_effect = None
+        self.mock_ec2.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-01111111",
+                            "State": {"Name": "running"},
+                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
+                            "PublicIpAddress": "54.180.1.1",  # 임시 공인 IP
+                            "NetworkInterfaces": [
+                                {
+                                    "Attachment": {"DeviceIndex": 0},
+                                    "NetworkInterfaceId": "eni-primary-1",
+                                    "Association": {
+                                        "PublicIp": "54.180.1.1",
+                                        # AllocationId 없음! (Auto-assigned IP)
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # 1) is_instance_eip_ready 검증
+        eip_ready, eip_reason = failover.is_instance_eip_ready("i-01111111", expected_allocation_id="eipalloc-11111")
+        self.assertFalse(eip_ready)
+        self.assertIn("auto-assigned public IP", eip_reason)
+        self.assertIn("static EIP (AllocationId) is not associated yet", eip_reason)
+        print("  Step 1: Auto-assigned public IP without AllocationId -> is_instance_eip_ready returns False.")
+
+        # 2) is_floating_eni_ready 검증
+        is_ready, inst_id, reason = failover.is_floating_eni_ready("eni-nat11111")
+        self.assertFalse(is_ready)
+        self.assertIn("auto-assigned public IP", reason)
+        print("  Step 2: Floating ENI readiness blocked by unassociated static EIP -> returns False.")
+
+        # 3) CloudWatch Alarm OK 수신 시 FAILBACK_DEFERRED 검증
+        event_ok = {
+            "source": "aws.cloudwatch",
+            "alarmData": {
+                "alarmName": "fundit-dev-nat-1-status-check",
+                "state": {"value": "OK"},
+            },
+        }
+        res_ok = failover.lambda_handler(event_ok, None)
+        self.assertEqual(res_ok["result"]["status"], "FAILBACK_DEFERRED")
+        self.assertIn("auto-assigned public IP", res_ok["result"]["reason"])
+        self.mock_ec2.replace_route.assert_not_called()
+        print("  Step 3: Alarm OK during temporary public IP -> FAILBACK_DEFERRED and route preserved.")
+
+        # Step 4: fck-nat에 의해 고정 EIP(AllocationId="eipalloc-11111")가 정상 연결됨
+        self.mock_ec2.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-01111111",
+                            "State": {"Name": "running"},
+                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
+                            "PublicIpAddress": "3.35.1.1",  # 고정 EIP
+                            "NetworkInterfaces": [
+                                {
+                                    "Attachment": {"DeviceIndex": 0},
+                                    "NetworkInterfaceId": "eni-primary-1",
+                                    "Association": {
+                                        "PublicIp": "3.35.1.1",
+                                        "AllocationId": "eipalloc-11111",
+                                        "AssociationId": "eipassoc-11111",
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        eip_ready_ok, eip_reason_ok = failover.is_instance_eip_ready("i-01111111", expected_allocation_id="eipalloc-11111")
+        self.assertTrue(eip_ready_ok)
+        self.assertIn("Static EIP associated", eip_reason_ok)
+
+        # Alarm OK 재수신 시 정상 페일백 실행 검증
+        res_failback = failover.lambda_handler(event_ok, None)
+        self.assertEqual(res_failback["result"]["status"], "UPDATED")
+        self.mock_ec2.replace_route.assert_called_once_with(
+            RouteTableId="rtb-0aaa1111",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat11111",
+        )
+        print("  Step 4: Static EIP associated -> Verified and Route Table A restored to NAT-1 Floating ENI.")
+        print("✅ Test 14 (Auto-assigned Public IP without Static EIP Deferred -> Verified after EIP Bound): PASSED")
+
+    def test_asg_unregistered_instance_fails_closed(self):
+        """
+        15. [PR 리뷰 검증 - ASG 미등록 인스턴스 Fail-closed 검증]
+            NAT 인스턴스는 ASG 관리가 필수 전제이므로:
+            1) ASG 조회 결과가 빈 배열(AutoScalingInstances: [])인 경우 True가 아닌 False를 반환하는지 검증
+            2) instance_id가 None이거나 빈 문자열인 경우 False를 반환하는지 검증
+            3) 미등록 인스턴스에 대해 is_floating_eni_ready()가 Fail-closed로 준비 미완료를 반환하는지 검증
+        """
+        # Step 1: ASG 조회 결과가 빈 경우
+        self.mock_asg.describe_auto_scaling_instances.side_effect = None
+        self.mock_asg.describe_auto_scaling_instances.return_value = {
+            "AutoScalingInstances": []
+        }
+
+        asg_ready, asg_reason = failover.is_instance_asg_inservice("i-unregistered-999")
+        self.assertFalse(asg_ready)
+        self.assertIn("not registered in any ASG", asg_reason)
+        print("  Step 1: Empty ASG query result -> is_instance_asg_inservice returns False (Fail-closed).")
+
+        # Step 2: instance_id가 비어있는 경우
+        asg_ready_empty, asg_reason_empty = failover.is_instance_asg_inservice("")
+        self.assertFalse(asg_ready_empty)
+        self.assertEqual(asg_reason_empty, "No instance ID")
+        print("  Step 2: Empty instance ID -> returns False.")
+
+        # Step 3: Floating ENI 확인 시 ASG 미등록으로 인해 차단되는지 검증
+        is_ready, inst_id, reason = failover.is_floating_eni_ready("eni-nat11111")
+        self.assertFalse(is_ready)
+        self.assertIn("not registered in any ASG", reason)
+        print("  Step 3: is_floating_eni_ready blocked by unregistered ASG -> returns False.")
+        print("✅ Test 15 (ASG Unregistered Instance Fail-Closed Verification): PASSED")
 
 
 if __name__ == "__main__":
