@@ -12,13 +12,13 @@ data "aws_iam_policy_document" "live_ivs_assume_role" {
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider_url}:sub"
+      variable = "${trimprefix(data.terraform_remote_state.eks.outputs.oidc_provider_url, "https://")}:sub"
       values   = ["system:serviceaccount:${var.live_namespace}:${var.live_service_account_name}"]
     }
 
     condition {
       test     = "StringEquals"
-      variable = "${data.terraform_remote_state.eks.outputs.oidc_provider_url}:aud"
+      variable = "${trimprefix(data.terraform_remote_state.eks.outputs.oidc_provider_url, "https://")}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -32,20 +32,7 @@ resource "aws_iam_role" "live_ivs" {
 
 # Live 서비스가 AWS IVS 채널/스트림키/녹화설정 및 IVS Chat 룸/채팅토큰을 관리하기 위한 정책
 data "aws_iam_policy_document" "live_ivs" {
-  # 1. IVS 목록 조회 작업: 리소스 레벨 권한을 지원하지 않는 API에 대해 wildcard 허용
-  statement {
-    sid    = "AllowIVSListOperations"
-    effect = "Allow"
-    actions = [
-      "ivs:ListChannels",
-      "ivs:ListStreamKeys",
-      "ivs:ListPlaybackKeyPairs",
-      "ivs:ListRecordingConfigurations",
-    ]
-    resources = ["*"]
-  }
-
-  # 2. IVS 채널 및 스트림키 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
+  # 1. IVS 채널 및 스트림키 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
   # AWS Service Authorization Reference에 따라 태그 포함 채널 생성 시 ivs:TagResource가 함께 요구됨
   statement {
     sid    = "AllowIVSResourceCreation"
@@ -67,7 +54,7 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 3. IVS 채널 및 스트림키 제어: dev 환경 태그가 부여된 리소스만 조작/삭제 가능 (aws:ResourceTag)
+  # 2. IVS 채널 및 스트림키 제어: dev 환경 태그가 부여된 리소스만 조작/삭제 가능 (aws:ResourceTag)
   statement {
     sid    = "AllowIVSResourceManagement"
     effect = "Allow"
@@ -97,7 +84,7 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 4. IVS 녹화 설정 및 재생 키페어 읽기: 현재 계정 및 리전의 ARN 한정
+  # 3. IVS 녹화 설정 및 재생 키페어 읽기: 현재 계정 및 리전의 ARN 한정
   statement {
     sid    = "AllowIVSSharedReadOperations"
     effect = "Allow"
@@ -111,18 +98,7 @@ data "aws_iam_policy_document" "live_ivs" {
     ]
   }
 
-  # 5. IVS Chat 목록 조회 작업: 리소스 레벨 권한을 지원하지 않는 API에 대해 wildcard 허용
-  statement {
-    sid    = "AllowIVSChatListOperations"
-    effect = "Allow"
-    actions = [
-      "ivschat:ListRooms",
-      "ivschat:ListLoggingConfigurations",
-    ]
-    resources = ["*"]
-  }
-
-  # 6. IVS Chat 룸 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
+  # 4. IVS Chat 룸 생성: dev 환경 태그 부여 강제 (aws:RequestTag)
   # AWS Service Authorization Reference에 따라 태그 포함 룸 생성 시 ivschat:TagResource가 함께 요구됨
   statement {
     sid    = "AllowIVSChatRoomCreation"
@@ -142,7 +118,7 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 7. IVS Chat 룸 및 채팅토큰/이벤트 관리: dev 환경 태그가 부여된 Room만 제어 가능 (aws:ResourceTag)
+  # 5. IVS Chat 룸 및 채팅토큰/이벤트 관리: dev 환경 태그가 부여된 Room만 제어 가능 (aws:ResourceTag)
   statement {
     sid    = "AllowIVSChatRoomManagement"
     effect = "Allow"
@@ -168,7 +144,7 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 8. 안전 설계 (타 환경 태그 변조 및 권한 상승 방지):
+  # 6. 안전 설계 (타 환경 태그 변조 및 권한 상승 방지):
   # 기존에 다른 환경(Environment != dev) 태그가 지정되어 있는 리소스에 대해 TagResource 호출을 명시적으로 차단하여,
   # 타 환경 리소스에 dev 태그를 붙여 관리 권한(ResourceTag/Environment)을 획득하는 우회 공격을 방지
   statement {
