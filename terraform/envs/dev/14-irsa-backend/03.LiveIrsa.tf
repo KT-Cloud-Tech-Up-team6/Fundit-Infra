@@ -52,7 +52,6 @@ data "aws_iam_policy_document" "live_ivs" {
     actions = [
       "ivs:CreateChannel",
       "ivs:CreateStreamKey",
-      "ivs:TagResource",
     ]
     resources = [
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:channel/*",
@@ -127,7 +126,6 @@ data "aws_iam_policy_document" "live_ivs" {
     effect = "Allow"
     actions = [
       "ivschat:CreateRoom",
-      "ivschat:TagResource",
     ]
     resources = [
       "arn:aws:ivschat:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:room/*",
