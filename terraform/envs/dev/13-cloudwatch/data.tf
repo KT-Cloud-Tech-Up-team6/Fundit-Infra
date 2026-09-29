@@ -62,7 +62,7 @@ data "aws_lb_target_group" "eks" {
   for_each = local.alb_target_groups
 
   tags = {
-    "elbv2.k8s.aws/cluster"   = "${var.project_name}-${var.environment}-eks"
+    "elbv2.k8s.aws/cluster"    = "${var.project_name}-${var.environment}-eks"
     "ingress.k8s.aws/resource" = each.value
   }
 }

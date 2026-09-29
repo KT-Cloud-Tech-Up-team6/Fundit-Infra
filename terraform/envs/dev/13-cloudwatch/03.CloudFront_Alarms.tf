@@ -46,10 +46,10 @@ resource "aws_cloudwatch_metric_alarm" "cloudfront_origin_latency" {
   namespace           = "AWS/CloudFront"
   period              = 300
   # OriginLatency는 퍼센타일 통계 지원
-  extended_statistic  = "p90"
-  threshold           = 2000 # 2,000ms = 2초
-  alarm_description   = "CloudFront 오리진 응답 시간(p90)이 2초를 초과했습니다. ALB 타겟 응답 지연 또는 EKS 파드 과부하를 확인하세요."
-  treat_missing_data  = "notBreaching"
+  extended_statistic = "p90"
+  threshold          = 2000 # 2,000ms = 2초
+  alarm_description  = "CloudFront 오리진 응답 시간(p90)이 2초를 초과했습니다. ALB 타겟 응답 지연 또는 EKS 파드 과부하를 확인하세요."
+  treat_missing_data = "notBreaching"
 
   dimensions = {
     DistributionId = data.terraform_remote_state.gateway.outputs.cloudfront_distribution_id

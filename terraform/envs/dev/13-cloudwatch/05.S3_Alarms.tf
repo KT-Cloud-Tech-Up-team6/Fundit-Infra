@@ -39,13 +39,13 @@ resource "aws_cloudwatch_metric_alarm" "media_bucket_4xx" {
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   # 4xx 에러율 = 4xxErrors / AllRequests * 100 (Metric Math 대신 단순 임계 사용)
-  metric_name         = "4xxErrors"
-  namespace           = "AWS/S3"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 50 # 5분 내 50건 이상 4xx
-  alarm_description   = "media 버킷에서 5분 내 50건 이상의 4xx 오류가 발생했습니다. 클라이언트 인증/권한 문제 또는 잘못된 요청을 확인하세요."
-  treat_missing_data  = "notBreaching"
+  metric_name        = "4xxErrors"
+  namespace          = "AWS/S3"
+  period             = 300
+  statistic          = "Sum"
+  threshold          = 50 # 5분 내 50건 이상 4xx
+  alarm_description  = "media 버킷에서 5분 내 50건 이상의 4xx 오류가 발생했습니다. 클라이언트 인증/권한 문제 또는 잘못된 요청을 확인하세요."
+  treat_missing_data = "notBreaching"
 
   dimensions = {
     BucketName = local.media_bucket_name

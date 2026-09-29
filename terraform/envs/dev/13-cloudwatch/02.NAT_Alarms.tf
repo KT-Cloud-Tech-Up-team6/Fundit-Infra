@@ -3,13 +3,15 @@
 # StatusCheckFailed 알람은 01-network의 nat-instance 모듈에 이미 존재 — 중복 방지
 # ──────────────────────────────────────────────────────────────────────────────
 locals {
-  # 01-network의 nat_asg_names(ASG Self-Healing 모드) 참조 (fallback으로 표준 명명 규칙 적용)
+  default_nat_asg_names = [
+    "${var.project_name}-${var.environment}-nat-asg-1",
+    "${var.project_name}-${var.environment}-nat-asg-2"
+  ]
+
+  # 01-network의 nat_asg_names(ASG Self-Healing 모드) 참조 (미정의 또는 빈 배열일 경우 기본 명명 규칙으로 fallback)
   nat_asg_names = try(
-    length(data.terraform_remote_state.network.outputs.nat_asg_names) > 0 ? data.terraform_remote_state.network.outputs.nat_asg_names : null,
-    [
-      "${var.project_name}-${var.environment}-nat-asg-1",
-      "${var.project_name}-${var.environment}-nat-asg-2"
-    ]
+    length(data.terraform_remote_state.network.outputs.nat_asg_names) > 0 ? data.terraform_remote_state.network.outputs.nat_asg_names : local.default_nat_asg_names,
+    local.default_nat_asg_names
   )
 }
 
