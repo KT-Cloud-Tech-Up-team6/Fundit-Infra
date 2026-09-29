@@ -1079,6 +1079,144 @@ class TestNatFailoverLambda(unittest.TestCase):
         print("  Step 3: InService + EIP Ready -> RECONCILED (Route restored to primary Floating ENI).")
         print("✅ Test 11 (Reconciliation Deferred during ASG Pending:Wait/EIP Unready, then Reconciled): PASSED")
 
+    def test_user_data_runtime_execution(self):
+        """
+        12. [User Data 런타임 서브프로세스 실행 검증]
+            문자열 정규식 검사를 넘어, 실제 bash 환경에서 User Data 부트스트랩 스크립트를 실행하여
+            1) eth1 미인식/타임아웃 시 실제로 ABANDON을 호출하고 exit code 1로 비정상 종료하는지 검증
+            2) eth1 부착 및 fck-nat 정상 시 CONTINUE를 호출하고 정상 종료(exit code 0)하는지 검증
+        """
+        import stat
+        import tempfile
+        import subprocess
+        import re
+
+        main_tf_path = os.path.join(
+            os.path.dirname(__file__), "..", "main.tf"
+        )
+        with open(main_tf_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        match = re.search(r"user_data = base64encode\(<<-EOF(.*?)EOF\s*\)", content, re.DOTALL)
+        self.assertIsNotNone(match, "user_data block must exist in main.tf")
+        raw_script = match.group(1).strip()
+
+        # 테라폼 변수 치환
+        script = re.sub(r"\$\{.*?\}", "mock-value", raw_script)
+        # 테스트 속도 최적화를 위해 루프 횟수 seq 1 30 -> seq 1 2, sleep 2 -> sleep 0.05
+        script = script.replace("seq 1 30", "seq 1 2").replace("sleep 2", "sleep 0.05")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bin_dir = os.path.join(tmpdir, "bin")
+            os.makedirs(bin_dir, exist_ok=True)
+            log_file = os.path.join(tmpdir, "aws_calls.log")
+
+            # mock aws CLI
+            aws_mock = os.path.join(bin_dir, "aws")
+            with open(aws_mock, "w") as f:
+                f.write('#!/bin/sh\necho "$@" >> "' + log_file + '"\nexit 0\n')
+            os.chmod(aws_mock, os.stat(aws_mock).st_mode | stat.S_IEXEC)
+
+            # mock curl (IMDSv2)
+            curl_mock = os.path.join(bin_dir, "curl")
+            with open(curl_mock, "w") as f:
+                f.write('#!/bin/sh\necho "mock-response"\nexit 0\n')
+            os.chmod(curl_mock, os.stat(curl_mock).st_mode | stat.S_IEXEC)
+
+            # mock systemctl
+            systemctl_mock = os.path.join(bin_dir, "systemctl")
+            with open(systemctl_mock, "w") as f:
+                f.write('#!/bin/sh\nexit 0\n')
+            os.chmod(systemctl_mock, os.stat(systemctl_mock).st_mode | stat.S_IEXEC)
+
+            # mock ip (초기: eth1 미발견)
+            ip_mock = os.path.join(bin_dir, "ip")
+            with open(ip_mock, "w") as f:
+                f.write('#!/bin/sh\nexit 1\n')
+            os.chmod(ip_mock, os.stat(ip_mock).st_mode | stat.S_IEXEC)
+
+            env = os.environ.copy()
+            env["PATH"] = bin_dir + ":" + env["PATH"]
+
+            # /etc/fck-nat.conf 쓰기를 임시 디렉터리로 리디렉션
+            script_mod = script.replace("/etc/fck-nat.conf", os.path.join(tmpdir, "fck-nat.conf"))
+
+            # 시나리오 1: 실패/타임아웃 시 ABANDON 호출 및 exit code 1
+            proc_fail = subprocess.run(["sh", "-c", script_mod], env=env, capture_output=True, text=True)
+            self.assertEqual(proc_fail.returncode, 1, "User data script must exit 1 on failure")
+            with open(log_file, "r") as f:
+                fail_logs = f.read()
+            self.assertIn("--lifecycle-action-result ABANDON", fail_logs)
+            print("  Step 1: Subprocess execution timeout -> ABANDON called and exit code 1 verified.")
+
+            # 시나리오 2: 성공 시 CONTINUE 호출 및 exit code 0
+            open(log_file, "w").close()
+            with open(ip_mock, "w") as f:
+                f.write('#!/bin/sh\nexit 0\n')
+            proc_success = subprocess.run(["sh", "-c", script_mod], env=env, capture_output=True, text=True)
+            self.assertEqual(proc_success.returncode, 0, "User data script must exit 0 on success")
+            with open(log_file, "r") as f:
+                success_logs = f.read()
+            self.assertIn("--lifecycle-action-result CONTINUE", success_logs)
+            print("  Step 2: Subprocess execution success -> CONTINUE called and exit code 0 verified.")
+            print("✅ Test 12 (User Data Real Subprocess Execution for Failure & Success): PASSED")
+
+    def test_lambda_iam_policy_and_role_permissions_and_access_denied_handling(self):
+        """
+        13. [Lambda IAM 역할 및 권한 검증]
+            1) failover.tf의 failover_lambda IAM 정책에 ec2:DescribeNetworkInterfaces,
+               autoscaling:DescribeAutoScalingInstances가 정의되어 있고 실제 역할에 연결되었는지 검증
+            2) 런타임에 DescribeNetworkInterfaces에서 AccessDenied 발생 시 안전하게 보류(DEFERRED)되고,
+               권한 정상 시 원활하게 검증을 통과하는지 검증
+        """
+        from botocore.exceptions import ClientError
+
+        failover_tf_path = os.path.join(
+            os.path.dirname(__file__), "..", "failover.tf"
+        )
+        with open(failover_tf_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # IAM 정책 선언 검증
+        self.assertIn('"ec2:DescribeNetworkInterfaces"', content)
+        self.assertIn('"autoscaling:DescribeAutoScalingInstances"', content)
+        self.assertIn('"autoscaling:DescribeAutoScalingGroups"', content)
+        self.assertIn('resource "aws_iam_role_policy_attachment" "failover_lambda"', content)
+        self.assertIn('role       = aws_iam_role.failover_lambda.name', content)
+        self.assertIn('role             = aws_iam_role.failover_lambda.arn', content)
+        print("  Step 1: Terraform IAM Policy & Role Attachment verified in failover.tf.")
+
+        # 런타임 시뮬레이션: AccessDenied 발생 시 안전 보류(Fail-closed) 검증
+        self.mock_ec2.describe_network_interfaces.side_effect = ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": "User is not authorized to perform: ec2:DescribeNetworkInterfaces"}},
+            "DescribeNetworkInterfaces"
+        )
+        is_ready, inst_id, reason = failover.is_floating_eni_ready("eni-nat11111")
+        self.assertFalse(is_ready)
+        self.assertIn("AccessDenied", reason)
+        print("  Step 2: AccessDenied exception handled safely (Fail-closed DEFERRED).")
+
+        # 런타임 시뮬레이션: 권한 부여 시 정상 통과 검증
+        self.mock_ec2.describe_network_interfaces.side_effect = None
+        self.mock_ec2.describe_network_interfaces.return_value = {
+            "NetworkInterfaces": [
+                {
+                    "NetworkInterfaceId": "eni-nat11111",
+                    "Status": "in-use",
+                    "Attachment": {
+                        "Status": "attached",
+                        "InstanceId": "i-01111111",
+                        "DeviceIndex": 1,
+                    },
+                }
+            ]
+        }
+        is_ready_ok, inst_id_ok, reason_ok = failover.is_floating_eni_ready("eni-nat11111")
+        self.assertTrue(is_ready_ok)
+        self.assertEqual(reason_ok, "Ready")
+        print("  Step 3: Permission granted -> is_floating_eni_ready returns True.")
+        print("✅ Test 13 (Lambda IAM Policy, Role Attachment & Runtime AccessDenied Handling): PASSED")
+
 
 if __name__ == "__main__":
     unittest.main()
