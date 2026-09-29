@@ -10,6 +10,8 @@ logger.setLevel(logging.INFO)
 
 ec2_client = boto3.client("ec2")
 sns_client = boto3.client("sns")
+autoscaling_client = boto3.client("autoscaling")
+
 
 # 환경 변수 로드
 ROUTE_TABLE_A_ID = os.environ.get("ROUTE_TABLE_A_ID")
@@ -170,10 +172,73 @@ def is_instance_healthy(instance_id):
         return False
 
 
+def is_instance_asg_inservice(instance_id):
+    """
+    인스턴스가 Auto Scaling Group에 속해 있는 경우,
+    LifecycleState가 'InService'인지 검증합니다.
+    (Pending:Wait 상태 등 부트스트랩/Lifecycle Hook 미완료 시 조기 페일백 방지)
+    ASG에 속해있지 않은 독립 인스턴스인 경우 True를 반환합니다.
+    """
+    if not instance_id:
+        return True, "No instance ID"
+    try:
+        resp = autoscaling_client.describe_auto_scaling_instances(
+            InstanceIds=[instance_id]
+        )
+        asg_instances = resp.get("AutoScalingInstances", [])
+        if not asg_instances:
+            # ASG 관리 대상이 아니면 ASG 검사는 통과 (독립 인스턴스)
+            return True, "Not managed by ASG"
+
+        asg_inst = asg_instances[0]
+        lifecycle_state = asg_inst.get("LifecycleState")
+        if lifecycle_state != "InService":
+            return False, f"Instance {instance_id} is in ASG lifecycle state '{lifecycle_state}' (not InService)"
+
+        return True, "InService"
+    except Exception as e:
+        logger.warning(f"Failed to check ASG instance status for {instance_id}: {e}")
+        # 오류 발생 시 안전하게 준비 미완료로 처리 (Fail-closed)
+        return False, f"ASG query error: {e}"
+
+
+def is_instance_eip_ready(instance_id):
+    """
+    인스턴스의 Primary ENI(eth0) 또는 인스턴스에 Elastic IP(공인 IP)가 정상 연결되어 있는지 검증합니다.
+    fck-nat 서비스가 부팅 시 EIP를 바인딩(associate-address)하기 전 조기 페일백을 방지합니다.
+    """
+    if not instance_id:
+        return True, "No instance ID"
+    try:
+        resp = ec2_client.describe_instances(InstanceIds=[instance_id])
+        reservations = resp.get("Reservations", [])
+        if not reservations or not reservations[0].get("Instances"):
+            return False, f"Instance {instance_id} not found"
+
+        inst = reservations[0]["Instances"][0]
+        # 1. 인스턴스 수준 PublicIpAddress 확인
+        public_ip = inst.get("PublicIpAddress")
+        if public_ip:
+            return True, f"EIP associated ({public_ip})"
+
+        # 2. eth0 NetworkInterface의 Association 확인
+        for iface in inst.get("NetworkInterfaces", []):
+            if iface.get("Attachment", {}).get("DeviceIndex") == 0:
+                assoc = iface.get("Association", {})
+                if assoc.get("PublicIp"):
+                    return True, f"EIP associated on eth0 ({assoc.get('PublicIp')})"
+
+        return False, f"Instance {instance_id} has no public IP/EIP associated yet"
+    except Exception as e:
+        logger.warning(f"Failed to check EIP status for {instance_id}: {e}")
+        return False, f"EIP query error: {e}"
+
+
 def is_floating_eni_ready(eni_id):
     """
     고정 Floating ENI가 인스턴스에 정상적으로 부착(attached)되어 있고,
-    해당 인스턴스가 실제로 running 및 2/2 status check를 통과(healthy)했는지 검증합니다.
+    해당 인스턴스가 실제로 running 및 2/2 status check를 통과(healthy)했으며,
+    ASG Lifecycle Hook이 완료되어 InService 상태이고 NAT/EIP가 준비되었는지 검증합니다.
     조기 페일백(Premature Failback)으로 인한 라우팅 블랙홀을 원천 차단합니다.
     반환값: (is_ready, instance_id, reason)
     """
@@ -196,13 +261,25 @@ def is_floating_eni_ready(eni_id):
         if not instance_id:
             return False, None, f"ENI {eni_id} has no attached instance ID"
 
+        # 1. 인스턴스 running 및 2/2 헬스체크 통과 여부 검증
         if not is_instance_healthy(instance_id):
             return False, instance_id, f"Attached instance {instance_id} is not fully healthy yet"
+
+        # 2. ASG InService 여부 검증 (Pending:Wait 상태 등 Lifecycle Hook 진행 중 조기 페일백 원천 방지)
+        asg_ready, asg_reason = is_instance_asg_inservice(instance_id)
+        if not asg_ready:
+            return False, instance_id, asg_reason
+
+        # 3. NAT/EIP 바인딩 완료 여부 검증 (Primary ENI에 공인 IP/EIP 연결 확인)
+        eip_ready, eip_reason = is_instance_eip_ready(instance_id)
+        if not eip_ready:
+            return False, instance_id, eip_reason
 
         return True, instance_id, "Ready"
     except Exception as e:
         logger.error(f"Failed to check floating ENI {eni_id} readiness: {e}")
         return False, None, str(e)
+
 
 
 def send_dual_failure_alert(route_table_id, target_instance_id, partner_instance_id, reason):

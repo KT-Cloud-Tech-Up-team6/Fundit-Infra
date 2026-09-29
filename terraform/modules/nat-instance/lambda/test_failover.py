@@ -20,8 +20,10 @@ class TestNatFailoverLambda(unittest.TestCase):
     def setUp(self):
         self.mock_ec2 = MagicMock()
         self.mock_sns = MagicMock()
+        self.mock_asg = MagicMock()
         failover.ec2_client = self.mock_ec2
         failover.sns_client = self.mock_sns
+        failover.autoscaling_client = self.mock_asg
         failover.ALERT_SNS_TOPIC_ARN = (
             "arn:aws:sns:ap-northeast-2:123456789012:fundit-dev-nat-failover-alerts"
         )
@@ -49,12 +51,15 @@ class TestNatFailoverLambda(unittest.TestCase):
             if inst_id == "i-01111111":
                 eni_id = "eni-nat11111"
                 tag_name = "fundit-dev-nat-1"
+                public_ip = "54.180.1.1"
             elif inst_id == "i-02222222":
                 eni_id = "eni-nat22222"
                 tag_name = "fundit-dev-nat-2"
+                public_ip = "54.180.2.2"
             else:
                 eni_id = "eni-unknown"
                 tag_name = tag_name or "some-other-instance"
+                public_ip = "54.180.9.9"
 
             return {
                 "Reservations": [
@@ -64,10 +69,12 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 "InstanceId": inst_id or "i-unknown",
                                 "State": {"Name": "running"},
                                 "Tags": [{"Key": "Name", "Value": tag_name}],
+                                "PublicIpAddress": public_ip,
                                 "NetworkInterfaces": [
                                     {
                                         "Attachment": {"DeviceIndex": 0},
                                         "NetworkInterfaceId": eni_id,
+                                        "Association": {"PublicIp": public_ip},
                                     }
                                 ],
                             }
@@ -113,6 +120,21 @@ class TestNatFailoverLambda(unittest.TestCase):
             }
 
         self.mock_ec2.describe_network_interfaces.side_effect = default_describe_network_interfaces
+
+        # 기본 ASG 인스턴스 상태 모의 (정상 InService)
+        def default_describe_asg_instances(*args, **kwargs):
+            inst_ids = kwargs.get("InstanceIds", [])
+            inst_id = inst_ids[0] if inst_ids else "i-default"
+            return {
+                "AutoScalingInstances": [
+                    {
+                        "InstanceId": inst_id,
+                        "LifecycleState": "InService",
+                    }
+                ]
+            }
+
+        self.mock_asg.describe_auto_scaling_instances.side_effect = default_describe_asg_instances
 
     def test_direct_invoke_alarm_failover(self):
         """1. CloudWatch Alarm 직접 호출 페이로드 파싱 및 파트너 정상 시 페일오버(Route Table A -> NAT-2) 검증"""
@@ -534,10 +556,12 @@ class TestNatFailoverLambda(unittest.TestCase):
                         {
                             "InstanceId": "i-new-99999",
                             "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
+                            "PublicIpAddress": "54.180.1.1",
                             "NetworkInterfaces": [
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-new-live-99999",
+                                    "Association": {"PublicIp": "54.180.1.1"},
                                 }
                             ],
                         }
@@ -610,10 +634,12 @@ class TestNatFailoverLambda(unittest.TestCase):
                         {
                             "InstanceId": "i-new-nat2",
                             "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-2"}],
+                            "PublicIpAddress": "54.180.2.2",
                             "NetworkInterfaces": [
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-dynamic-live-nat2",
+                                    "Association": {"PublicIp": "54.180.2.2"},
                                 }
                             ],
                         }
@@ -901,7 +927,160 @@ class TestNatFailoverLambda(unittest.TestCase):
         )
         print("✅ Test 10 (User Data Fail-Closed and Timeout ABANDON): PASSED")
 
+    def test_reconciliation_deferred_when_asg_pending_wait_then_reconciled_when_inservice(self):
+        """
+        11. [PR 리뷰 검증]
+            주기적 reconciliation 시 EC2 2/2 검사를 통과했더라도
+            ASG가 Pending:Wait (fck-nat/EIP 부트스트랩 미완료) 상태이면 우회 라우트를 유지(DEFERRED/NOOP)하고,
+            InService 및 EIP 준비 완료 후 정상 페일백(RECONCILED)되는지 검증
+        """
+        # RTB-A가 현재 NAT-2 ENI(우회 경로)를 가리키고 있는 상태
+        self.mock_ec2.describe_route_tables.return_value = {
+            "RouteTables": [
+                {
+                    "RouteTableId": "rtb-0aaa1111",
+                    "Routes": [
+                        {
+                            "DestinationCidrBlock": "0.0.0.0/0",
+                            "NetworkInterfaceId": "eni-nat22222",  # 우회 ENI
+                        }
+                    ],
+                }
+            ]
+        }
+
+        # Floating ENI는 인스턴스에 정상 attached
+        def mock_eni_attached(*args, **kwargs):
+            return {
+                "NetworkInterfaces": [
+                    {
+                        "NetworkInterfaceId": "eni-nat11111",
+                        "Status": "in-use",
+                        "Attachment": {
+                            "Status": "attached",
+                            "InstanceId": "i-01111111",
+                            "DeviceIndex": 1,
+                        },
+                    }
+                ]
+            }
+        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_attached
+
+        # EC2 상태는 2/2 정상 통과! (running + ok + ok)
+        def mock_ec2_2_2_healthy(InstanceIds, IncludeAllInstances=True):
+            return {
+                "InstanceStatuses": [
+                    {
+                        "InstanceId": "i-01111111",
+                        "InstanceState": {"Name": "running"},
+                        "InstanceStatus": {"Status": "ok"},
+                        "SystemStatus": {"Status": "ok"},
+                    }
+                ]
+            }
+        self.mock_ec2.describe_instance_status.side_effect = mock_ec2_2_2_healthy
+
+        # BUT 1단계: ASG Lifecycle State가 아직 Pending:Wait (부트스트랩/Hook 진행 중)
+        self.mock_asg.describe_auto_scaling_instances.side_effect = None
+        self.mock_asg.describe_auto_scaling_instances.return_value = {
+            "AutoScalingInstances": [
+                {
+                    "InstanceId": "i-01111111",
+                    "LifecycleState": "Pending:Wait",
+                }
+            ]
+        }
+
+        # EventBridge Scheduled Event (주기적 Reconciliation) 발생
+        event_scheduled = {
+            "source": "aws.events",
+            "detail-type": "Scheduled Event",
+        }
+        res_pending = failover.lambda_handler(event_scheduled, None)
+
+        # 검증 1: Pending:Wait 상태이므로 조기 페일백이 보류(DEFERRED)되고 NOOP 반환
+        self.assertEqual(res_pending["statusCode"], 200)
+        self.assertEqual(res_pending["result"]["status"], "NOOP")
+        self.assertEqual(res_pending["result"]["details"]["route_table_a"]["status"], "DEFERRED")
+        self.assertIn("Pending:Wait", res_pending["result"]["details"]["route_table_a"]["reason"])
+        self.mock_ec2.replace_route.assert_not_called()
+        print("  Step 1: EC2 2/2 Healthy but ASG Pending:Wait -> DEFERRED & Bypass Route Maintained.")
+
+        # BUT 2단계: ASG InService이지만 EIP 바인딩이 아직 안 된 경우 (NAT/EIP 준비 미완료)
+        self.mock_asg.describe_auto_scaling_instances.return_value = {
+            "AutoScalingInstances": [
+                {
+                    "InstanceId": "i-01111111",
+                    "LifecycleState": "InService",
+                }
+            ]
+        }
+        self.mock_ec2.describe_instances.side_effect = None
+        self.mock_ec2.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-01111111",
+                            "State": {"Name": "running"},
+                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
+                            "PublicIpAddress": None,  # EIP 미할당
+                            "NetworkInterfaces": [
+                                {
+                                    "Attachment": {"DeviceIndex": 0},
+                                    "NetworkInterfaceId": "eni-primary-1",
+                                    # Association 없음
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+        res_eip_missing = failover.lambda_handler(event_scheduled, None)
+        self.assertEqual(res_eip_missing["result"]["status"], "NOOP")
+        self.assertEqual(res_eip_missing["result"]["details"]["route_table_a"]["status"], "DEFERRED")
+        self.assertIn("no public IP/EIP", res_eip_missing["result"]["details"]["route_table_a"]["reason"])
+        self.mock_ec2.replace_route.assert_not_called()
+        print("  Step 2: ASG InService but EIP not ready -> DEFERRED & Bypass Route Maintained.")
+
+        # 3단계: fck-nat 완료 후 EIP 바인딩 및 ASG InService 완료!
+        self.mock_ec2.describe_instances.return_value = {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {
+                            "InstanceId": "i-01111111",
+                            "State": {"Name": "running"},
+                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
+                            "PublicIpAddress": "54.180.1.1",  # EIP 바인딩 완료
+                            "NetworkInterfaces": [
+                                {
+                                    "Attachment": {"DeviceIndex": 0},
+                                    "NetworkInterfaceId": "eni-primary-1",
+                                    "Association": {"PublicIp": "54.180.1.1"},
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ]
+        }
+
+        res_inservice = failover.lambda_handler(event_scheduled, None)
+        self.assertEqual(res_inservice["statusCode"], 200)
+        self.assertEqual(res_inservice["result"]["status"], "RECONCILED")
+        self.assertEqual(res_inservice["result"]["details"]["route_table_a"]["status"], "UPDATED")
+        self.mock_ec2.replace_route.assert_called_once_with(
+            RouteTableId="rtb-0aaa1111",
+            DestinationCidrBlock="0.0.0.0/0",
+            NetworkInterfaceId="eni-nat11111",
+        )
+        print("  Step 3: InService + EIP Ready -> RECONCILED (Route restored to primary Floating ENI).")
+        print("✅ Test 11 (Reconciliation Deferred during ASG Pending:Wait/EIP Unready, then Reconciled): PASSED")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

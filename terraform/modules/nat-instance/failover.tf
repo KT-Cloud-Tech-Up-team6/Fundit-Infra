@@ -58,7 +58,10 @@ resource "aws_iam_policy" "failover_lambda" {
         Action = [
           "ec2:DescribeRouteTables",
           "ec2:DescribeInstances",
-          "ec2:DescribeInstanceStatus"
+          "ec2:DescribeInstanceStatus",
+          "ec2:DescribeNetworkInterfaces",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeAutoScalingGroups"
         ]
         Resource = "*"
       },
