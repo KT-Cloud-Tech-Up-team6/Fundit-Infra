@@ -39,6 +39,23 @@ resource "helm_release" "kube_prometheus_stack" {
           }
         }
       }
+      # monitoring 네임스페이스의 AlertmanagerConfig에는 namespace matcher가 자동으로 붙어
+      # 다른 네임스페이스 알림이 null로 빠진다. Fundit-GitOps dev/monitoring/alertmanagerconfig.yaml을
+      # 전역 설정으로 지정해 matcher 없이 쓴다.
+      alertmanager = {
+        alertmanagerSpec = {
+          alertmanagerConfiguration = {
+            name = "fundit-routes"
+          }
+        }
+      }
+      # EKS는 컨트롤 플레인 파드가 노드에 없어 차트 기본 방식으로 수집하지 못한다. 켜 두면 Down 알림이 계속 울린다.
+      kubeControllerManager = {
+        enabled = false
+      }
+      kubeScheduler = {
+        enabled = false
+      }
       grafana = {
         additionalDataSources = [
           {
