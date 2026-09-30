@@ -43,7 +43,7 @@ resource "aws_iam_role_policy" "gitops_frontend_ecr_read" {
   })
 }
 
-# Fundit-GitOps main의 Backend·Copilot·Highlight 이미지 digest 검증 전용 Role.
+# Fundit-GitOps main의 Backend·AI 이미지 digest 검증 전용 Role.
 # Frontend Role과 분리해 이번 CD 범위의 ECR 조회만 허용한다.
 resource "aws_iam_role" "gitops_be_ai_ecr_read" {
   name                 = "fundit-gitops-be-ai-ecr-read-role"
@@ -86,6 +86,8 @@ resource "aws_iam_role_policy" "gitops_be_ai_ecr_read" {
         "fundit-backend",
         "fundit-ai-copilot",
         "fundit-ai-highlight",
+        "fundit-ai-cuesheet",
+        "fundit-ai-funding-story",
       ] : module.ecr.repository_arns[name]]
     }]
   })
