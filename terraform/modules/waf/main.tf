@@ -278,10 +278,15 @@ resource "aws_wafv2_web_acl_logging_configuration" "cloudfront" {
   log_destination_configs = [aws_cloudwatch_log_group.waf.arn]
   depends_on              = [aws_cloudwatch_log_resource_policy.waf]
 
-  # WAF 차단 로그에 클라이언트 인증 토큰(Bearer JWT 등)이 평문으로 남지 않도록 마스킹
+  # WAF 차단 로그에 클라이언트 인증 토큰(Bearer JWT) 및 세션 쿠키가 평문으로 남지 않도록 마스킹
   redacted_fields {
     single_header {
       name = "authorization"
+    }
+  }
+  redacted_fields {
+    single_header {
+      name = "cookie"
     }
   }
 
