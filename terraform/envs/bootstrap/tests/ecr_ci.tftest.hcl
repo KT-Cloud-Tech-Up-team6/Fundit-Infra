@@ -152,3 +152,32 @@ run "write_permissions_do_not_cross_repositories" {
     error_message = "저장소 전체에 허용하는 작업은 로그인뿐이며, 이미지 작업은 Push에 필요한 권한으로 제한해야 합니다."
   }
 }
+
+run "gitops_frontend_read_is_limited_to_main_and_one_repository" {
+  command = apply
+
+  assert {
+    condition = (
+      jsondecode(aws_iam_role.gitops_frontend_ecr_read.assume_role_policy).Statement[0].Principal.Federated ==
+      "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" &&
+      jsondecode(aws_iam_role.gitops_frontend_ecr_read.assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity" &&
+      jsondecode(aws_iam_role.gitops_frontend_ecr_read.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
+      jsondecode(aws_iam_role.gitops_frontend_ecr_read.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] ==
+      "repo:KT-Cloud-Tech-Up-team6@316099892/Fundit-GitOps@1359714048:ref:refs/heads/main"
+    )
+    error_message = "GitOps ECR 조회 Role은 GitOps 저장소의 immutable main OIDC 주체만 신뢰해야 합니다."
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.gitops_frontend_ecr_read.name == "fundit-gitops-frontend-ecr-read-role" &&
+      aws_iam_role.gitops_frontend_ecr_read.tags["Project"] == "Fundit" &&
+      aws_iam_role.gitops_frontend_ecr_read.tags["Team"] == "Team6" &&
+      length(jsondecode(aws_iam_role_policy.gitops_frontend_ecr_read.policy).Statement) == 1 &&
+      jsondecode(aws_iam_role_policy.gitops_frontend_ecr_read.policy).Statement[0].Action == "ecr:DescribeImages" &&
+      jsondecode(aws_iam_role_policy.gitops_frontend_ecr_read.policy).Statement[0].Resource ==
+      "arn:aws:ecr:ap-northeast-2:123456789012:repository/fundit-frontend"
+    )
+    error_message = "GitOps ECR 조회 Role은 Frontend 저장소의 DescribeImages 외 권한을 가져서는 안 됩니다."
+  }
+}
