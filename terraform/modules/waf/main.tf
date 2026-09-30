@@ -18,7 +18,40 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     allow {}
   }
 
-  # 1. AWS 관리형 Core rule set (일반적인 웹 공격 방어)
+  # 1. [대용량 DoS 방어] 8KB 제한 완화에 따른 보완책으로 10MB 초과 비정상 페이로드 즉시 차단
+  rule {
+    name     = "SizeRestrictions_BODY_10MB"
+    priority = 0
+
+    action {
+      block {}
+    }
+
+    statement {
+      size_constraint_statement {
+        field_to_match {
+          body {
+            oversize_handling = "MATCH"
+          }
+        }
+        comparison_operator = "GT"
+        size                = 10485760 # 10MB (10 * 1024 * 1024 bytes)
+        text_transformation {
+          priority = 0
+          type     = "NONE"
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.project_name}-${var.environment}-body-size-10mb"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # 2. AWS 관리형 Core rule set (일반적인 웹 공격 방어)
+  # SizeRestrictions_BODY(8KB) 및 CrossSiteScripting_BODY는 Count로 오버라이드하여 WAF Label 발행
   rule {
     name     = "AWS-AWSManagedRulesCommonRuleSet"
     priority = 1
@@ -31,6 +64,22 @@ resource "aws_wafv2_web_acl" "cloudfront" {
       managed_rule_group_statement {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
+
+        # 레거시 8KB 제한은 Priority 0의 10MB 차단 룰로 대체
+        rule_action_override {
+          action_to_use {
+            count {}
+          }
+          name = "SizeRestrictions_BODY"
+        }
+
+        # HTML 서식/태그 허용을 위해 Count 모드로 전환하고 Label 발행
+        rule_action_override {
+          action_to_use {
+            count {}
+          }
+          name = "CrossSiteScripting_BODY"
+        }
       }
     }
 
@@ -41,10 +90,74 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     }
   }
 
-  # 2. AWS 관리형 SQL Injection rule set
+  # 3. [XSS 정밀 방어] 스토리(/story) 및 큐시트(/cuesheet) 예외 경로를 제외한 일반 API의 XSS 공격 즉시 차단
+  rule {
+    name     = "Block_XSS_Except_AllowedPaths"
+    priority = 2
+
+    action {
+      block {}
+    }
+
+    statement {
+      and_statement {
+        # WAF CommonRuleSet이 감지한 XSS 레이블이 존재하는 경우
+        statement {
+          label_match_statement {
+            scope = "LABEL"
+            key   = "awswaf:managed:aws:core-rule-set:CrossSiteScripting_Body"
+          }
+        }
+
+        # 단, 리치 텍스트 서식 저장이 허용된 특정 엔드포인트(/story, /cuesheet)가 아닌 경우에만 차단
+        statement {
+          not_statement {
+            statement {
+              or_statement {
+                statement {
+                  byte_match_statement {
+                    search_string         = "/story"
+                    positional_constraint = "ENDS_WITH"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  byte_match_statement {
+                    search_string         = "/cuesheet"
+                    positional_constraint = "CONTAINS"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.project_name}-${var.environment}-block-xss-except-allowed"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # 4. AWS 관리형 SQL Injection rule set
   rule {
     name     = "AWS-AWSManagedRulesSQLiRuleSet"
-    priority = 2
+    priority = 3
 
     override_action {
       none {}
