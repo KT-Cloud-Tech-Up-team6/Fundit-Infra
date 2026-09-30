@@ -54,17 +54,15 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 2. IVS 채널 및 스트림키 제어: dev 환경 태그가 부여된 리소스만 조작/삭제 가능 (aws:ResourceTag)
+  # 2. IVS 채널 제어: dev 환경 태그가 부여된 채널만 조작/삭제 가능 (aws:ResourceTag)
   statement {
-    sid    = "AllowIVSResourceManagement"
+    sid    = "AllowIVSChannelManagement"
     effect = "Allow"
     actions = [
       "ivs:GetChannel",
       "ivs:UpdateChannel",
       "ivs:DeleteChannel",
       "ivs:BatchGetChannel",
-      "ivs:GetStreamKey",
-      "ivs:DeleteStreamKey",
       "ivs:GetStream",
       "ivs:StopStream",
       "ivs:GetStreamSession",
@@ -74,7 +72,6 @@ data "aws_iam_policy_document" "live_ivs" {
     ]
     resources = [
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:channel/*",
-      "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stream-key/*",
     ]
 
     condition {
@@ -82,6 +79,21 @@ data "aws_iam_policy_document" "live_ivs" {
       variable = "aws:ResourceTag/Environment"
       values   = [var.environment]
     }
+  }
+
+  # 2-1. IVS 스트림키 제어: AWS IVS는 채널 생성 시 자동 발급되는 스트림키에 채널 태그를 상속하지 않음 (이슈 #140)
+  # 따라서 스트림키 조회/삭제는 태그 조건 없이 현재 계정 및 리전의 stream-key ARN으로 제한하여 503 에러 방지
+  statement {
+    sid    = "AllowIVSStreamKeyManagement"
+    effect = "Allow"
+    actions = [
+      "ivs:GetStreamKey",
+      "ivs:DeleteStreamKey",
+      "ivs:ListTagsForResource",
+    ]
+    resources = [
+      "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stream-key/*",
+    ]
   }
 
   # 3. IVS 녹화 설정 및 재생 키페어 읽기: 현재 계정 및 리전의 ARN 한정
