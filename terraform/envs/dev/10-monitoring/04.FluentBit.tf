@@ -11,6 +11,26 @@ resource "helm_release" "fluent_bit" {
   values = [
     yamlencode({
       config = {
+        # 이슈 #(번호): kube-system/karpenter 등 불필요한 네임스페이스 로그와
+        # Spring Boot 헬스체크(/actuator/health) 로그까지 전부 Loki로 쌓이고
+        # 있어 디스크 낭비. 두 필터로 워크로드 네임스페이스만, 헬스체크는
+        # 제외하고 남긴다.
+        #
+        # 확인 필요: $kubernetes['namespace_name']와 $log는 kubernetes 필터가
+        # 붙이는 필드 이름 기준 추정값. 실제 태그(Match 패턴)와 필드명은
+        # 차트 기본 inputs 설정을 따로 override하지 않은 상태라, 적용 후
+        # 실제로 걸러지는지 로그로 확인 필요.
+        filters = <<-EOT
+          [FILTER]
+              Name  grep
+              Match kube.*
+              Regex $kubernetes['namespace_name'] ^(dev|monitoring)$
+
+          [FILTER]
+              Name    grep
+              Match   kube.*
+              Exclude $log /actuator/health
+        EOT
         outputs = <<-EOT
           [OUTPUT]
               Name loki
