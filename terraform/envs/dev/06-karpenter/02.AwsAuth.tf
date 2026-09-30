@@ -32,6 +32,12 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
         username = "fundit-terraform-ci-role"
         groups   = ["system:masters"]
       },
+      # 보안팀 Ansible 점검 서버(03-compute ansible-inspector-role). 권한은 dev RoleBinding security-audit-db가 준다.
+      {
+        rolearn  = "arn:aws:iam::899957568205:role/fundit-dev-ansible-inspector-role"
+        username = "fundit-dev-ansible-inspector"
+        groups   = ["fundit-security-audit"]
+      },
     ])
 
     mapUsers = yamlencode([
