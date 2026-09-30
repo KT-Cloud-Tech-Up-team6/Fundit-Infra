@@ -185,3 +185,46 @@ resource "aws_iam_role_policy_attachment" "live_ivs" {
   role       = aws_iam_role.live_ivs.name
   policy_arn = aws_iam_policy.live_ivs.arn
 }
+
+# ----------------------------------------------------
+# 7. Live 서비스용 S3 접근 정책 (방송 썸네일 및 VOD 녹화본 관리, 이슈 #128)
+# ----------------------------------------------------
+data "aws_iam_policy_document" "live_s3" {
+  statement {
+    sid    = "AllowLiveMediaAndVideoBucketList"
+    effect = "Allow"
+    actions = [
+      "s3:ListBucket",
+    ]
+    resources = [
+      data.terraform_remote_state.storage.outputs.media_bucket_arn,
+      data.terraform_remote_state.storage.outputs.video_bucket_arn,
+    ]
+  }
+
+  statement {
+    sid    = "AllowLiveMediaAndVideoObjectManagement"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+    ]
+    resources = [
+      "${data.terraform_remote_state.storage.outputs.media_bucket_arn}/*",
+      "${data.terraform_remote_state.storage.outputs.video_bucket_arn}/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "live_s3" {
+  name        = "fundit-${var.environment}-live-s3-policy"
+  description = "Live 서비스 Pod의 미디어 및 VOD S3 버킷 접근(방송 썸네일/녹화본 관리)을 위한 IAM 정책"
+  policy      = data.aws_iam_policy_document.live_s3.json
+  tags        = var.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "live_s3" {
+  role       = aws_iam_role.live_ivs.name
+  policy_arn = aws_iam_policy.live_s3.arn
+}
