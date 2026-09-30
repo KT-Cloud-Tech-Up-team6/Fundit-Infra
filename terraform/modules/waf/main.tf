@@ -28,17 +28,56 @@ resource "aws_wafv2_web_acl" "cloudfront" {
     }
 
     statement {
-      size_constraint_statement {
-        field_to_match {
-          body {
-            oversize_handling = "MATCH"
+      and_statement {
+        statement {
+          size_constraint_statement {
+            field_to_match {
+              body {
+                oversize_handling = "MATCH"
+              }
+            }
+            comparison_operator = "GT"
+            size                = 10485760 # 10MB (10 * 1024 * 1024 bytes)
+            text_transformation {
+              priority = 0
+              type     = "NONE"
+            }
           }
         }
-        comparison_operator = "GT"
-        size                = 10485760 # 10MB (10 * 1024 * 1024 bytes)
-        text_transformation {
-          priority = 0
-          type     = "NONE"
+
+        # CloudFront WAF의 본문 검사 한도(16KB)로 인해 oversize_handling = MATCH 시 16KB 초과 요청이 차단되므로,
+        # 긴 본문 저장이 필요한 스토리 및 큐시트 경로는 이 크기 제한 규칙에서 명시적으로 제외한다.
+        statement {
+          not_statement {
+            statement {
+              or_statement {
+                statement {
+                  regex_match_statement {
+                    regex_string = "^/api/v1/projects/[0-9a-zA-Z_-]+/story$"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+                statement {
+                  regex_match_statement {
+                    regex_string = "^/api/v1/lives/[0-9a-zA-Z_-]+/cue-sheet$"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -109,18 +148,34 @@ resource "aws_wafv2_web_acl" "cloudfront" {
           }
         }
 
-        # 단, 리치 텍스트 서식 저장이 허용된 프로젝트 상세 엔드포인트(/api/v1/projects/{id}/story, cuesheet)가 아닌 경우에만 차단
+        # 단, 리치 텍스트 서식 저장이 허용된 프로젝트 스토리 및 라이브 큐시트 엔드포인트는 차단에서 제외
         statement {
           not_statement {
             statement {
-              regex_match_statement {
-                regex_string = "^/api/v1/projects/[0-9a-zA-Z_-]+/(story|cuesheet)$"
-                field_to_match {
-                  uri_path {}
+              or_statement {
+                statement {
+                  regex_match_statement {
+                    regex_string = "^/api/v1/projects/[0-9a-zA-Z_-]+/story$"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
                 }
-                text_transformation {
-                  priority = 0
-                  type     = "NONE"
+                statement {
+                  regex_match_statement {
+                    regex_string = "^/api/v1/lives/[0-9a-zA-Z_-]+/cue-sheet$"
+                    field_to_match {
+                      uri_path {}
+                    }
+                    text_transformation {
+                      priority = 0
+                      type     = "NONE"
+                    }
+                  }
                 }
               }
             }
@@ -222,6 +277,13 @@ resource "aws_wafv2_web_acl_logging_configuration" "cloudfront" {
   resource_arn            = aws_wafv2_web_acl.cloudfront.arn
   log_destination_configs = [aws_cloudwatch_log_group.waf.arn]
   depends_on              = [aws_cloudwatch_log_resource_policy.waf]
+
+  # WAF 차단 로그에 클라이언트 인증 토큰(Bearer JWT 등)이 평문으로 남지 않도록 마스킹
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
+  }
 
   # ALLOW 트래픽까지 다 쌓이면 로그 비용이 늘어나서 차단된 요청만 남긴다
   logging_filter {
