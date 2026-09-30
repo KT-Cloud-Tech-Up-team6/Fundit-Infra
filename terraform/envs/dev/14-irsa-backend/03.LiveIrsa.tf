@@ -239,3 +239,36 @@ resource "aws_iam_role_policy_attachment" "live_s3" {
   role       = aws_iam_role.live_ivs.name
   policy_arn = aws_iam_policy.live_s3.arn
 }
+
+# ----------------------------------------------------
+# 8. Live 서비스용 IVS 녹화 완료 SQS 수신 정책
+# ----------------------------------------------------
+data "aws_iam_policy_document" "live_sqs" {
+  statement {
+    sid    = "AllowLiveRecordingSQSConsume"
+    effect = "Allow"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueUrl",
+      "sqs:GetQueueAttributes",
+      "sqs:ChangeMessageVisibility",
+    ]
+    resources = [
+      aws_sqs_queue.live_recording.arn,
+    ]
+  }
+}
+
+resource "aws_iam_policy" "live_sqs" {
+  name        = "fundit-${var.environment}-live-sqs-policy"
+  description = "Live 서비스 Pod의 IVS 녹화 완료 이벤트 SQS 큐 수신 및 삭제를 위한 IAM 정책"
+  policy      = data.aws_iam_policy_document.live_sqs.json
+  tags        = var.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "live_sqs" {
+  role       = aws_iam_role.live_ivs.name
+  policy_arn = aws_iam_policy.live_sqs.arn
+}
+
