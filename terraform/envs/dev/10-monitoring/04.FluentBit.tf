@@ -16,11 +16,26 @@ resource "helm_release" "fluent_bit" {
         # 있어 디스크 낭비. 두 필터로 워크로드 네임스페이스만, 헬스체크는
         # 제외하고 남긴다.
         #
-        # 확인 필요: $kubernetes['namespace_name']와 $log는 kubernetes 필터가
-        # 붙이는 필드 이름 기준 추정값. 실제 태그(Match 패턴)와 필드명은
-        # 차트 기본 inputs 설정을 따로 override하지 않은 상태라, 적용 후
-        # 실제로 걸러지는지 로그로 확인 필요.
+        # 주의(PR #146 리뷰 반영): config.filters를 지정하면 차트 기본
+        # 필터가 "추가"가 아니라 "대체"된다. 원래 있던 Name kubernetes
+        # 필터(kubernetes.namespace_name 등 메타데이터를 붙여주는 역할)를
+        # 빼먹으면 아래 grep이 참조하는 필드 자체가 없어서 kube.* 로그가
+        # 전부 걸러진다. 그래서 원본 kubernetes 필터를 그대로 유지하고
+        # 그 뒤에 grep 필터를 덧붙인다(실제 클러스터의 현재 ConfigMap에서
+        # 원본 내용 확인 완료).
+        #
+        # host.*(systemd, kubelet.service 로그)는 이번 필터 대상에 포함하지
+        # 않음 — 애초 목적(워크로드 네임스페이스 노이즈·헬스체크 스팸 감소)
+        # 밖의 범위이고, 이미 kubelet 하나로 좁게 받고 있어 양도 적음.
         filters = <<-EOT
+          [FILTER]
+              Name kubernetes
+              Match kube.*
+              Merge_Log On
+              Keep_Log Off
+              K8S-Logging.Parser On
+              K8S-Logging.Exclude On
+
           [FILTER]
               Name  grep
               Match kube.*
