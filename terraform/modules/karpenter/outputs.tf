@@ -12,3 +12,8 @@ output "node_role_name" {
   description = "Karpenter가 만드는 노드에 붙는 IAM Role 이름 (EC2NodeClass.spec.role에 사용)"
   value       = aws_iam_role.node.name
 }
+
+output "interruption_queue_name" {
+  description = "Karpenter Interruption Queue 이름 (Helm settings.interruptionQueue에 사용)"
+  value       = aws_sqs_queue.interruption.name
+}

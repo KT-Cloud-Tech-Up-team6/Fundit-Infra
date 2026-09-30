@@ -7,7 +7,13 @@ variable "karpenter_chart_version" {
 variable "common_tags" {
   description = "공통 태그"
   type        = map(string)
-  default     = {}
+  # tfvars는 gitignore 대상이라 CI/CD apply는 항상 이 기본값을 쓴다.
+  default = {
+    Project     = "Fundit"
+    Team        = "Team6"
+    Environment = "dev"
+    ManagedBy   = "Terraform"
+  }
 }
 
 variable "security_transfer_bucket_name" {
