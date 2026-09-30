@@ -109,36 +109,18 @@ resource "aws_wafv2_web_acl" "cloudfront" {
           }
         }
 
-        # 단, 리치 텍스트 서식 저장이 허용된 특정 엔드포인트(/story, /cuesheet)가 아닌 경우에만 차단
+        # 단, 리치 텍스트 서식 저장이 허용된 프로젝트 상세 엔드포인트(/api/v1/projects/{id}/story, cuesheet)가 아닌 경우에만 차단
         statement {
           not_statement {
             statement {
-              or_statement {
-                statement {
-                  byte_match_statement {
-                    search_string         = "/story"
-                    positional_constraint = "ENDS_WITH"
-                    field_to_match {
-                      uri_path {}
-                    }
-                    text_transformation {
-                      priority = 0
-                      type     = "NONE"
-                    }
-                  }
+              regex_match_statement {
+                regex_string = "^/api/v1/projects/[0-9a-zA-Z_-]+/(story|cuesheet)$"
+                field_to_match {
+                  uri_path {}
                 }
-                statement {
-                  byte_match_statement {
-                    search_string         = "/cuesheet"
-                    positional_constraint = "CONTAINS"
-                    field_to_match {
-                      uri_path {}
-                    }
-                    text_transformation {
-                      priority = 0
-                      type     = "NONE"
-                    }
-                  }
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
                 }
               }
             }
