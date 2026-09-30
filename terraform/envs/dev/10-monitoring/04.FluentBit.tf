@@ -25,6 +25,21 @@ resource "helm_release" "fluent_bit" {
       # Pod 슬롯을 확보한다. 노드의 maxPods가 가득 찬 경우 낮은 우선순위 Pod를
       # 다른 노드 또는 Karpenter 노드로 재배치해 DaemonSet Pending을 방지한다.
       priorityClassName = "system-node-critical"
+      # taint가 있는 노드에서도 로그를 수집한다. stateful 노드(CNPG·Redis·Loki·Tempo)와 spot NodePool 노드.
+      tolerations = [
+        {
+          key      = "workload"
+          operator = "Equal"
+          value    = "stateful"
+          effect   = "NoSchedule"
+        },
+        {
+          key      = "fundit.io/spot"
+          operator = "Equal"
+          value    = "true"
+          effect   = "NoSchedule"
+        },
+      ]
       # 차트 기본값은 resources: {}(무제한)이다. 차트가 예시로 든 값을 그대로 쓴다.
       resources = {
         requests = {
