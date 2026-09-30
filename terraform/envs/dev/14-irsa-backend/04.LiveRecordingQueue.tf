@@ -129,6 +129,7 @@ resource "aws_sqs_queue_policy" "live_recording_dlq" {
 # ※ AWS IVS는 payload에 media.hls.path를 별도 제공하지 않으며,
 #   녹화 완료된 HLS 마스터 플레이리스트(.m3u8)는 아래 규칙으로 조합해야 합니다:
 #   master_playlist_url = "https://${CLOUDFRONT_DOMAIN}/${recording_s3_key_prefix}/media/hls/master.m3u8"
+#   (예: https://infrastudy.store/ivs/v1/.../media/hls/master.m3u8)
 resource "aws_cloudwatch_event_rule" "live_recording" {
   name        = "fundit-${var.environment}-ivs-recording-end"
   description = "AWS IVS 실시간 방송 녹화 완료(Recording End) 이벤트 수신"
@@ -138,9 +139,10 @@ resource "aws_cloudwatch_event_rule" "live_recording" {
     "detail-type" = ["IVS Recording State Change"]
     detail = {
       recording_status = ["Recording End"]
-      # [Critical 방어] 타 환경(Prod) 이벤트가 Dev 큐로 흘러들어오는 교차 오염 방지
-      # 백엔드가 IVS 채널 생성 시 환경 접두사(fundit-dev-)를 붙인다는 전제 조건이 필수적임
-      channel_name = [{ "prefix" : "fundit-${var.environment}-" }]
+      # 환경 간(dev/prod) 이벤트 교차 오염 방지:
+      # 백엔드의 채널 명명 규칙(seller-{sellerId})에 의존하지 않고,
+      # 환경별 격리된 VOD S3 녹화 버킷(fundit-video-dev-team6) 이름을 기준으로 필터링합니다.
+      recording_s3_bucket_name = [data.terraform_remote_state.storage.outputs.video_bucket_name]
     }
   })
 
