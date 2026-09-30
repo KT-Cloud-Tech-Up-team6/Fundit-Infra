@@ -48,3 +48,8 @@ output "live_recording_event_rule_arn" {
   value       = aws_cloudwatch_event_rule.live_recording.arn
 }
 
+output "live_recording_dlq_alarm_arn" {
+  description = "IVS 녹화 완료 DLQ 메시지 적재 감지 CloudWatch Metric Alarm ARN"
+  value       = aws_cloudwatch_metric_alarm.live_recording_dlq.arn
+}
+
