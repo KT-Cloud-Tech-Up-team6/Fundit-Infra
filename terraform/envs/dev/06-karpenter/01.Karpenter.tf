@@ -32,4 +32,9 @@ resource "helm_release" "karpenter" {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
     value = module.karpenter.controller_role_arn
   }
+
+  set {
+    name  = "settings.interruptionQueue"
+    value = module.karpenter.interruption_queue_name
+  }
 }

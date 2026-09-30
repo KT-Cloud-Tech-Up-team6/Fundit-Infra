@@ -109,9 +109,8 @@ resource "aws_iam_role" "controller" {
   tags               = var.tags
 }
 
-# 아래 5개 정책은 Karpenter 공식 CloudFormation 템플릿(getting-started-with-karpenter/cloudformation.yaml)의
-# KarpenterControllerPolicy 구성을 그대로 옮긴 것이다. Interruption Queue(SQS 기반 스팟 중단 처리)는
-# 스팟/온디맨드 비율이 아직 팀 확인 필요 상태라 이번 범위에서는 뺐다.
+# 아래 정책들은 Karpenter 공식 CloudFormation 템플릿(getting-started-with-karpenter/cloudformation.yaml)의
+# KarpenterControllerPolicy 구성을 그대로 옮긴 것이다. Interruption Queue 관련 리소스는 파일 끝에 있다.
 
 resource "aws_iam_policy" "node_lifecycle" {
   name = "KarpenterControllerNodeLifecyclePolicy-${var.cluster_name}"
@@ -469,4 +468,121 @@ resource "aws_iam_role_policy_attachment" "controller_zonal_shift" {
 resource "aws_iam_role_policy_attachment" "controller_resource_discovery" {
   role       = aws_iam_role.controller.name
   policy_arn = aws_iam_policy.resource_discovery.arn
+}
+
+# 스팟 회수 예고·용량 예약 회수 예고·리밸런스 권고·인스턴스 상태 변경·AWS Health 이벤트를 받아
+# Karpenter가 노드를 미리 비우도록 한다. 구성은 공식 CloudFormation 템플릿(v1.14.0)과 같다.
+resource "aws_sqs_queue" "interruption" {
+  name                      = "${var.cluster_name}-karpenter-interruption"
+  message_retention_seconds = 300
+  sqs_managed_sse_enabled   = true
+  tags                      = var.tags
+}
+
+data "aws_iam_policy_document" "interruption_queue" {
+  statement {
+    sid       = "EC2InterruptionPolicy"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.interruption.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com", "sqs.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "DenyHTTP"
+    effect    = "Deny"
+    actions   = ["sqs:*"]
+    resources = [aws_sqs_queue.interruption.arn]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_sqs_queue_policy" "interruption" {
+  queue_url = aws_sqs_queue.interruption.id
+  policy    = data.aws_iam_policy_document.interruption_queue.json
+}
+
+locals {
+  interruption_rules = {
+    scheduled-change = {
+      source      = "aws.health"
+      detail_type = "AWS Health Event"
+    }
+    spot-interruption = {
+      source      = "aws.ec2"
+      detail_type = "EC2 Spot Instance Interruption Warning"
+    }
+    capacity-reservation-interruption = {
+      source      = "aws.ec2"
+      detail_type = "EC2 Capacity Reservation Instance Interruption Warning"
+    }
+    rebalance = {
+      source      = "aws.ec2"
+      detail_type = "EC2 Instance Rebalance Recommendation"
+    }
+    instance-state-change = {
+      source      = "aws.ec2"
+      detail_type = "EC2 Instance State-change Notification"
+    }
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "interruption" {
+  for_each = local.interruption_rules
+
+  name = "${var.cluster_name}-karpenter-${each.key}"
+  event_pattern = jsonencode({
+    source      = [each.value.source]
+    detail-type = [each.value.detail_type]
+  })
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "interruption" {
+  for_each = local.interruption_rules
+
+  rule = aws_cloudwatch_event_rule.interruption[each.key].name
+  arn  = aws_sqs_queue.interruption.arn
+}
+
+resource "aws_iam_policy" "interruption" {
+  name = "KarpenterControllerInterruptionPolicy-${var.cluster_name}"
+  path = "/"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AllowInterruptionQueueActions"
+        Effect   = "Allow"
+        Resource = aws_sqs_queue.interruption.arn
+        Action = [
+          "sqs:DeleteMessage",
+          "sqs:GetQueueUrl",
+          "sqs:ReceiveMessage"
+        ]
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "controller_interruption" {
+  role       = aws_iam_role.controller.name
+  policy_arn = aws_iam_policy.interruption.arn
 }
