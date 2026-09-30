@@ -81,15 +81,14 @@ data "aws_iam_policy_document" "live_ivs" {
     }
   }
 
-  # 2-1. IVS 스트림키 제어: AWS IVS는 채널 생성 시 자동 발급되는 스트림키에 채널 태그를 상속하지 않음 (이슈 #140)
-  # 따라서 스트림키 조회/삭제는 태그 조건 없이 현재 계정 및 리전의 stream-key ARN으로 제한하여 503 에러 방지
+  # 2-1. IVS 스트림키 조회: AWS IVS는 채널 생성 시 자동 발급되는 스트림키에 채널 태그를 상속하지 않음 (이슈 #140)
+  # 백엔드(live-service) 실코드 대조 결과 GetStreamKey만 호출하므로 최소 권한 원칙(Least Privilege)에 따라
+  # 태그 조건 없이 GetStreamKey만 단독 허용하여 dev 외 타 환경 스트림키 삭제 위험 원천 차단
   statement {
-    sid    = "AllowIVSStreamKeyManagement"
+    sid    = "AllowIVSGetStreamKey"
     effect = "Allow"
     actions = [
       "ivs:GetStreamKey",
-      "ivs:DeleteStreamKey",
-      "ivs:ListTagsForResource",
     ]
     resources = [
       "arn:aws:ivs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:stream-key/*",
