@@ -35,5 +35,5 @@ output "gitops_frontend_ecr_read_role_arn" {
 
 output "gitops_be_ai_ecr_read_role_arn" {
   value       = aws_iam_role.gitops_be_ai_ecr_read.arn
-  description = "Fundit-GitOps main의 Backend·Copilot·Highlight ECR 이미지 digest 검증 전용 IAM Role ARN"
+  description = "Fundit-GitOps main의 Backend·AI ECR 이미지 digest 검증 전용 IAM Role ARN"
 }
