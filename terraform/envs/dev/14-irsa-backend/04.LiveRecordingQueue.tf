@@ -138,6 +138,9 @@ resource "aws_cloudwatch_event_rule" "live_recording" {
     "detail-type" = ["IVS Recording State Change"]
     detail = {
       recording_status = ["Recording End"]
+      # [Critical 방어] 타 환경(Prod) 이벤트가 Dev 큐로 흘러들어오는 교차 오염 방지
+      # 백엔드가 IVS 채널 생성 시 환경 접두사(fundit-dev-)를 붙인다는 전제 조건이 필수적임
+      channel_name = [{ "prefix" : "fundit-${var.environment}-" }]
     }
   })
 
@@ -165,6 +168,10 @@ resource "aws_cloudwatch_metric_alarm" "live_recording_dlq" {
   threshold           = 1
   alarm_description   = "IVS 녹화 완료 메시지 처리 실패: live-recording-dlq에 메시지가 인입되었습니다. (메시지 유실 및 VOD 변환 오류 점검 필요)"
   treat_missing_data  = "notBreaching"
+
+  # TODO: 13-cloudwatch 레이어의 공통 infra_alerts SNS 토픽이 완전히 Apply된 이후,
+  # 아래 주석을 해제하여 Slack/Email 알림이 정상 발송되도록(침묵의 알람 방지) 연동 필수.
+  # alarm_actions       = [data.terraform_remote_state.cloudwatch.outputs.infra_alerts_sns_topic_arn]
 
   dimensions = {
     QueueName = aws_sqs_queue.live_recording_dlq.name

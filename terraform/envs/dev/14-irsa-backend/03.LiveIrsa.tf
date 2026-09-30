@@ -157,7 +157,13 @@ data "aws_iam_policy_document" "live_ivs" {
 
   # 6. 안전 설계 (타 환경 태그 변조 및 권한 상승 방지):
   # 기존에 다른 환경(Environment != dev) 태그가 지정되어 있는 리소스에 대해 TagResource 호출을 명시적으로 차단하여,
-  # 타 환경 리소스에 dev 태그를 붙여 관리 권한(ResourceTag/Environment)을 획득하는 우회 공격을 방지
+  # 타 환경 리소스에 dev 태그를 붙여 관리 권한(ResourceTag/Environment)을 획득하는 우회 공격을 방지합니다.
+  #
+  # [보안 경고 - Tagging Bypass 엣지 케이스]
+  # 이 정책의 두 번째 condition(Null = "false")에 의해 "태그가 아예 없는(Untagged)" 리소스에는 Deny가 동작하지 않습니다.
+  # 만약 누군가 수동으로 Prod 채널을 생성하면서 Environment 태그를 누락했다면, Dev 백엔드가 해당 채널에
+  # Environment=dev 태그를 달고 소유권을 탈취(Takeover)할 수 있는 이론적 헛점이 존재합니다.
+  # 이를 완벽히 방어하려면 AWS Config Rule을 통해 모든 리소스 생성 시 태그를 강제(Tagging Enforce)해야 합니다.
   statement {
     sid    = "DenyTagExistingNonDevResources"
     effect = "Deny"
