@@ -22,3 +22,8 @@ output "live_ivs_role_name" {
   description = "Live ServiceAccount에 연결된 IAM Role 이름"
   value       = aws_iam_role.live_ivs.name
 }
+
+output "live_s3_policy_arn" {
+  description = "Live ServiceAccount에 연결된 S3 IAM 정책 ARN"
+  value       = aws_iam_policy.live_s3.arn
+}
