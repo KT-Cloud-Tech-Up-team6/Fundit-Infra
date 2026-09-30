@@ -27,3 +27,8 @@ output "ecr_ci_role_arns" {
   value       = { for name, role in aws_iam_role.ecr_ci : name => role.arn }
   description = "애플리케이션 이미지 Push용 IAM Role ARN (backend/frontend/ai_*)"
 }
+
+output "gitops_frontend_ecr_read_role_arn" {
+  value       = aws_iam_role.gitops_frontend_ecr_read.arn
+  description = "Fundit-GitOps main의 Frontend ECR 이미지 digest 검증 전용 IAM Role ARN"
+}
