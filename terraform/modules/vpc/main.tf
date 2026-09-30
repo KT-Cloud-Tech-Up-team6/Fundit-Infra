@@ -114,3 +114,22 @@ resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
 }
+
+# 10. 데이터베이스 전용 라우팅 테이블 (인터넷 라우트 차단, VPC 내부 전용)
+resource "aws_route_table" "database" {
+  vpc_id = aws_vpc.main.id
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-db-rt"
+      Type = "Database"
+    }
+  )
+}
+
+# 11. 데이터베이스 라우팅 테이블과 데이터베이스 서브넷 연결
+resource "aws_route_table_association" "database" {
+  count          = length(aws_subnet.database)
+  subnet_id      = aws_subnet.database[count.index].id
+  route_table_id = aws_route_table.database.id
+}

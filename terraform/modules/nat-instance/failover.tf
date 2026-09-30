@@ -58,7 +58,10 @@ resource "aws_iam_policy" "failover_lambda" {
         Action = [
           "ec2:DescribeRouteTables",
           "ec2:DescribeInstances",
-          "ec2:DescribeInstanceStatus"
+          "ec2:DescribeInstanceStatus",
+          "ec2:DescribeNetworkInterfaces",
+          "autoscaling:DescribeAutoScalingInstances",
+          "autoscaling:DescribeAutoScalingGroups"
         ]
         Resource = "*"
       },
@@ -113,10 +116,12 @@ resource "aws_lambda_function" "failover" {
     variables = {
       ROUTE_TABLE_A_ID    = var.private_route_table_ids[0]
       ROUTE_TABLE_C_ID    = var.private_route_table_ids[1]
-      NAT_1_ENI_ID        = aws_instance.nat[0].primary_network_interface_id
-      NAT_2_ENI_ID        = aws_instance.nat[1].primary_network_interface_id
-      NAT_1_INSTANCE_ID   = aws_instance.nat[0].id
-      NAT_2_INSTANCE_ID   = aws_instance.nat[1].id
+      NAT_1_ENI_ID        = aws_network_interface.nat[0].id
+      NAT_2_ENI_ID        = aws_network_interface.nat[1].id
+      NAT_1_EIP_ALLOC_ID  = aws_eip.nat[0].id
+      NAT_2_EIP_ALLOC_ID  = aws_eip.nat[1].id
+      NAT_1_INSTANCE_ID   = ""
+      NAT_2_INSTANCE_ID   = ""
       NAT_1_TAG_NAME      = "${var.project_name}-${var.environment}-nat-1"
       NAT_2_TAG_NAME      = "${var.project_name}-${var.environment}-nat-2"
       ALERT_SNS_TOPIC_ARN = aws_sns_topic.failover_alerts.arn
@@ -131,28 +136,34 @@ resource "aws_lambda_function" "failover" {
   )
 }
 
-# 5. CloudWatch Metric Alarm (NAT-1, NAT-2 StatusCheckFailed 감시)
+# 5. CloudWatch Metric Alarm (NAT ASG InService 인스턴스 정상 여부 감시)
+# ASG에 정상 인스턴스가 1대 미만일 때 즉시 알람을 울려 Failover 및 SNS 장애 전파 수행
 resource "aws_cloudwatch_metric_alarm" "nat_status" {
-  count               = length(aws_instance.nat)
+  count               = length(aws_autoscaling_group.nat)
   alarm_name          = "${var.project_name}-${var.environment}-nat-${count.index + 1}-status-check"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "StatusCheckFailed"
-  namespace           = "AWS/EC2"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "GroupInServiceInstances"
+  namespace           = "AWS/AutoScaling"
   period              = 60
-  statistic           = "Maximum"
-  threshold           = 0
-  alarm_description   = "Status check failed for NAT instance ${count.index + 1}. Triggers failover/failback."
+  statistic           = "Minimum"
+  threshold           = 1
+  alarm_description   = "Auto Scaling Group ${count.index + 1} has less than 1 in-service instance. Triggers failover and alert."
 
-  # NAT 인스턴스 중지(stopped) 등으로 지표 수집이 중단될 때 INSUFFICIENT_DATA로 방치되지 않고 ALARM으로 처리
   treat_missing_data = "breaching"
 
   dimensions = {
-    InstanceId = aws_instance.nat[count.index].id
+    AutoScalingGroupName = aws_autoscaling_group.nat[count.index].name
   }
 
-  alarm_actions = [aws_lambda_function.failover.arn]
-  ok_actions    = [aws_lambda_function.failover.arn]
+  alarm_actions = [
+    aws_lambda_function.failover.arn,
+    aws_sns_topic.failover_alerts.arn
+  ]
+  ok_actions = [
+    aws_lambda_function.failover.arn,
+    aws_sns_topic.failover_alerts.arn
+  ]
 
   tags = merge(
     var.tags,
@@ -164,7 +175,7 @@ resource "aws_cloudwatch_metric_alarm" "nat_status" {
 
 # 6. CloudWatch Alarm이 Lambda 함수를 호출할 수 있도록 리소스 기반 권한 부여
 resource "aws_lambda_permission" "allow_cloudwatch_alarm" {
-  count         = length(aws_instance.nat)
+  count         = length(aws_autoscaling_group.nat)
   statement_id  = "AllowExecutionFromCloudWatchAlarm-${count.index + 1}"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.failover.function_name
@@ -229,5 +240,36 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.nat_instance_state.arn
 }
+
+# 9. EventBridge: 주기적 Route Reconciliation 스케줄 (지연된 페일백 자동 복구)
+# EC2 running 또는 알람 OK 시점에 2/2 검사가 미완료되어 FAILBACK_DEFERRED로 보류된 경우,
+# 이후 2/2 검사가 완료되었을 때 우회 라우팅이 영구 잔류하지 않도록 주기적으로 대조하여 페일백을 완수합니다.
+resource "aws_cloudwatch_event_rule" "nat_periodic_reconcile" {
+  name                = "${var.project_name}-${var.environment}-nat-periodic-reconcile"
+  description         = "Periodic reconciliation rule for NAT failover route tables to recover from deferred failbacks"
+  schedule_expression = "rate(1 minute)"
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-${var.environment}-nat-periodic-reconcile"
+    }
+  )
+}
+
+resource "aws_cloudwatch_event_target" "lambda_periodic_reconcile" {
+  rule      = aws_cloudwatch_event_rule.nat_periodic_reconcile.name
+  target_id = "NatFailoverLambdaPeriodicReconcile"
+  arn       = aws_lambda_function.failover.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_periodic" {
+  statement_id  = "AllowExecutionFromEventBridgePeriodicReconcile"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.failover.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.nat_periodic_reconcile.arn
+}
+
 
 
