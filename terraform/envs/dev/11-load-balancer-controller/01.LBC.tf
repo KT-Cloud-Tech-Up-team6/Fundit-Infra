@@ -61,4 +61,16 @@ resource "helm_release" "aws_load_balancer_controller" {
     name  = "createIngressClassResource"
     value = "true"
   }
+
+  # 차트가 메트릭 포트(8080) Service와 ServiceMonitor를 함께 만든다.
+  # Prometheus는 release 라벨이 있는 ServiceMonitor만 수집한다.
+  set {
+    name  = "serviceMonitor.enabled"
+    value = "true"
+  }
+
+  set {
+    name  = "serviceMonitor.additionalLabels.release"
+    value = "kube-prometheus-stack"
+  }
 }
