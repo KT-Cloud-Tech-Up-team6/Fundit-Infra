@@ -54,17 +54,14 @@ class TestNatFailoverLambda(unittest.TestCase):
                 eni_id = "eni-nat11111"
                 tag_name = "fundit-dev-nat-1"
                 public_ip = "54.180.1.1"
-                alloc_id = "eipalloc-11111"
             elif inst_id == "i-02222222":
                 eni_id = "eni-nat22222"
                 tag_name = "fundit-dev-nat-2"
                 public_ip = "54.180.2.2"
-                alloc_id = "eipalloc-22222"
             else:
                 eni_id = "eni-unknown"
                 tag_name = tag_name or "some-other-instance"
                 public_ip = "54.180.9.9"
-                alloc_id = "eipalloc-99999"
 
             return {
                 "Reservations": [
@@ -79,11 +76,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                                     {
                                         "Attachment": {"DeviceIndex": 0},
                                         "NetworkInterfaceId": eni_id,
-                                        "Association": {
-                                            "PublicIp": public_ip,
-                                            "AllocationId": alloc_id,
-                                            "AssociationId": f"eipassoc-{alloc_id[8:]}",
-                                        },
+                                        "Association": {"PublicIp": public_ip},
                                     }
                                 ],
                             }
@@ -128,7 +121,32 @@ class TestNatFailoverLambda(unittest.TestCase):
                 ]
             }
 
-        self.mock_ec2.describe_network_interfaces.side_effect = default_describe_network_interfaces
+        self.mock_floating_eni = MagicMock(side_effect=default_describe_network_interfaces)
+
+        # EIP 확인용 primary ENI(DeviceIndex 0) 조회 모의. 인스턴스별 Association, 빈 dict면 공인 IP 없음
+        self.primary_eni_association = {
+            "i-01111111": {"PublicIp": "54.180.1.1", "AllocationId": "eipalloc-11111"},
+            "i-02222222": {"PublicIp": "54.180.2.2", "AllocationId": "eipalloc-22222"},
+            "i-new-99999": {"PublicIp": "54.180.1.1", "AllocationId": "eipalloc-11111"},
+            "i-new-nat2": {"PublicIp": "54.180.2.2", "AllocationId": "eipalloc-22222"},
+        }
+
+        def describe_network_interfaces_router(*args, **kwargs):
+            if "Filters" not in kwargs:
+                return self.mock_floating_eni(*args, **kwargs)
+            inst_id = next(
+                f["Values"][0] for f in kwargs["Filters"] if f["Name"] == "attachment.instance-id"
+            )
+            iface = {
+                "NetworkInterfaceId": f"eni-primary-{inst_id}",
+                "Attachment": {"DeviceIndex": 0, "InstanceId": inst_id},
+            }
+            association = self.primary_eni_association.get(inst_id, {})
+            if association:
+                iface["Association"] = dict(association)
+            return {"NetworkInterfaces": [iface]}
+
+        self.mock_ec2.describe_network_interfaces.side_effect = describe_network_interfaces_router
 
         # 기본 ASG 인스턴스 상태 모의 (정상 InService)
         def default_describe_asg_instances(*args, **kwargs):
@@ -282,8 +300,8 @@ class TestNatFailoverLambda(unittest.TestCase):
         }
 
         # Floating ENI가 아직 인스턴스에 붙지 않음 (user-data 부팅 초기 단계)
-        self.mock_ec2.describe_network_interfaces.side_effect = None
-        self.mock_ec2.describe_network_interfaces.return_value = {
+        self.mock_floating_eni.side_effect = None
+        self.mock_floating_eni.return_value = {
             "NetworkInterfaces": [
                 {
                     "NetworkInterfaceId": "eni-nat11111",
@@ -570,10 +588,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-new-live-99999",
-                                    "Association": {
-                                        "PublicIp": "54.180.1.1",
-                                        "AllocationId": "eipalloc-11111",
-                                    },
+                                    "Association": {"PublicIp": "54.180.1.1"},
                                 }
                             ],
                         }
@@ -595,8 +610,8 @@ class TestNatFailoverLambda(unittest.TestCase):
             ]
         }
 
-        self.mock_ec2.describe_network_interfaces.side_effect = None
-        self.mock_ec2.describe_network_interfaces.return_value = {
+        self.mock_floating_eni.side_effect = None
+        self.mock_floating_eni.return_value = {
             "NetworkInterfaces": [
                 {
                     "NetworkInterfaceId": "eni-nat11111",
@@ -651,10 +666,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                                 {
                                     "Attachment": {"DeviceIndex": 0},
                                     "NetworkInterfaceId": "eni-dynamic-live-nat2",
-                                    "Association": {
-                                        "PublicIp": "54.180.2.2",
-                                        "AllocationId": "eipalloc-22222",
-                                    },
+                                    "Association": {"PublicIp": "54.180.2.2"},
                                 }
                             ],
                         }
@@ -676,8 +688,8 @@ class TestNatFailoverLambda(unittest.TestCase):
             ]
         }
 
-        self.mock_ec2.describe_network_interfaces.side_effect = None
-        self.mock_ec2.describe_network_interfaces.return_value = {
+        self.mock_floating_eni.side_effect = None
+        self.mock_floating_eni.return_value = {
             "NetworkInterfaces": [
                 {
                     "NetworkInterfaceId": "eni-nat22222",
@@ -798,7 +810,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                 ]
             }
 
-        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_available
+        self.mock_floating_eni.side_effect = mock_eni_available
         event_running = {
             "source": "aws.ec2",
             "detail-type": "EC2 Instance State-change Notification",
@@ -838,7 +850,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                 ]
             }
 
-        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_attached
+        self.mock_floating_eni.side_effect = mock_eni_attached
         self.mock_ec2.describe_instance_status.side_effect = mock_status_initializing
 
         event_alarm_ok = {
@@ -902,7 +914,7 @@ class TestNatFailoverLambda(unittest.TestCase):
     def test_user_data_script_fail_closed_on_timeout(self):
         """
         10. [User Data 검증]
-            60초 타임아웃 시 CONTINUE 대신 ABANDON을 전송하고 exit 1로 비정상 종료하여
+            검사 30회 안에 준비되지 않으면 CONTINUE 대신 ABANDON을 전송하고 exit 1로 비정상 종료하여
             조기 페일백 블랙홀을 원천 방지(Fail-Closed)하는지 검증
         """
         import base64
@@ -919,7 +931,8 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.assertIn("ABANDON", content)
         self.assertIn("CONTINUE", content)
         self.assertIn("exit 1", content)
-        self.assertIn("systemctl is-active fck-nat", content)
+        self.assertIn("installed by fck-nat", content)
+        self.assertIn("describe-network-interfaces", content)
 
         # 실패 시 ABANDON 호출 및 exit 1 검증
         abandon_block = re.search(
@@ -979,7 +992,7 @@ class TestNatFailoverLambda(unittest.TestCase):
                     }
                 ]
             }
-        self.mock_ec2.describe_network_interfaces.side_effect = mock_eni_attached
+        self.mock_floating_eni.side_effect = mock_eni_attached
 
         # EC2 상태는 2/2 정상 통과! (running + ok + ok)
         def mock_ec2_2_2_healthy(InstanceIds, IncludeAllInstances=True):
@@ -1030,28 +1043,8 @@ class TestNatFailoverLambda(unittest.TestCase):
                 }
             ]
         }
-        self.mock_ec2.describe_instances.side_effect = None
-        self.mock_ec2.describe_instances.return_value = {
-            "Reservations": [
-                {
-                    "Instances": [
-                        {
-                            "InstanceId": "i-01111111",
-                            "State": {"Name": "running"},
-                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
-                            "PublicIpAddress": None,  # EIP 미할당
-                            "NetworkInterfaces": [
-                                {
-                                    "Attachment": {"DeviceIndex": 0},
-                                    "NetworkInterfaceId": "eni-primary-1",
-                                    # Association 없음
-                                }
-                            ],
-                        }
-                    ]
-                }
-            ]
-        }
+        # primary ENI에 공인 IP·EIP가 아직 없음
+        self.primary_eni_association["i-01111111"] = {}
         res_eip_missing = failover.lambda_handler(event_scheduled, None)
         self.assertEqual(res_eip_missing["result"]["status"], "NOOP")
         self.assertEqual(res_eip_missing["result"]["details"]["route_table_a"]["status"], "DEFERRED")
@@ -1060,30 +1053,7 @@ class TestNatFailoverLambda(unittest.TestCase):
         print("  Step 2: ASG InService but EIP not ready -> DEFERRED & Bypass Route Maintained.")
 
         # 3단계: fck-nat 완료 후 EIP 바인딩 및 ASG InService 완료!
-        self.mock_ec2.describe_instances.return_value = {
-            "Reservations": [
-                {
-                    "Instances": [
-                        {
-                            "InstanceId": "i-01111111",
-                            "State": {"Name": "running"},
-                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
-                            "PublicIpAddress": "54.180.1.1",  # EIP 바인딩 완료
-                            "NetworkInterfaces": [
-                                {
-                                    "Attachment": {"DeviceIndex": 0},
-                                    "NetworkInterfaceId": "eni-primary-1",
-                                    "Association": {
-                                        "PublicIp": "54.180.1.1",
-                                        "AllocationId": "eipalloc-11111",
-                                    },
-                                }
-                            ],
-                        }
-                    ]
-                }
-            ]
-        }
+        self.primary_eni_association["i-01111111"] = {"PublicIp": "54.180.1.1", "AllocationId": "eipalloc-11111"}
 
         res_inservice = failover.lambda_handler(event_scheduled, None)
         self.assertEqual(res_inservice["statusCode"], 200)
@@ -1100,11 +1070,13 @@ class TestNatFailoverLambda(unittest.TestCase):
     def test_user_data_runtime_execution(self):
         """
         12. [User Data 런타임 서브프로세스 실행 검증]
-            문자열 정규식 검사를 넘어, 실제 bash 환경에서 User Data 부트스트랩 스크립트를 실행하여
-            1) eth1 미인식/타임아웃 시 실제로 ABANDON을 호출하고 exit code 1로 비정상 종료하는지 검증
-            2) eth1 부착 및 fck-nat 정상 시 CONTINUE를 호출하고 정상 종료(exit code 0)하는지 검증
+            실제 sh 환경에서 User Data 부트스트랩 스크립트를 실행한다.
+            aws mock은 실제 API에서 확인한 쿼리로 호출될 때만 값을 돌려준다.
+            1) fck-nat NAT 규칙 미설치, 고정 ENI 미부착, EIP 불일치 각각에서 ABANDON 및 exit code 1인지 검증
+            2) 세 조건이 모두 맞을 때 CONTINUE 및 exit code 0인지 검증
         """
         import stat
+        import sys
         import tempfile
         import subprocess
         import re
@@ -1119,8 +1091,10 @@ class TestNatFailoverLambda(unittest.TestCase):
         self.assertIsNotNone(match, "user_data block must exist in main.tf")
         raw_script = match.group(1).strip()
 
-        # 테라폼 변수 치환
-        script = re.sub(r"\$\{.*?\}", "mock-value", raw_script)
+        # 테라폼 변수 치환. ENI와 EIP는 서로 다른 값으로 둬야 쿼리 비교가 의미를 가진다
+        script = raw_script.replace("${aws_network_interface.nat[count.index].id}", "eni-floating-1")
+        script = script.replace("${aws_eip.nat[count.index].id}", "eipalloc-static-1")
+        script = re.sub(r"\$\{.*?\}", "mock-value", script)
         # 테스트 속도 최적화를 위해 루프 횟수 seq 1 30 -> seq 1 2, sleep 2 -> sleep 0.05
         script = script.replace("seq 1 30", "seq 1 2").replace("sleep 2", "sleep 0.05")
 
@@ -1129,63 +1103,89 @@ class TestNatFailoverLambda(unittest.TestCase):
             os.makedirs(bin_dir, exist_ok=True)
             log_file = os.path.join(tmpdir, "aws_calls.log")
 
-            # mock aws CLI
-            aws_mock = os.path.join(bin_dir, "aws")
-            with open(aws_mock, "w") as f:
-                f.write(
-                    '#!/bin/sh\n'
-                    'echo "$@" >> "' + log_file + '"\n'
-                    'case "$*" in\n'
-                    '  *describe-instances*)\n'
-                    '    echo "mock-value"\n'
-                    '    ;;\n'
-                    'esac\n'
-                    'exit 0\n'
-                )
-            os.chmod(aws_mock, os.stat(aws_mock).st_mode | stat.S_IEXEC)
+            def write_mock(name, body):
+                path = os.path.join(bin_dir, name)
+                with open(path, "w") as f:
+                    f.write(body)
+                os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+
+            # mock aws CLI: 실제 API로 확인한 쿼리와 정확히 같을 때만 응답한다
+            write_mock(
+                "aws",
+                "#!" + sys.executable + "\n"
+                "import os, sys\n"
+                "args = sys.argv[1:]\n"
+                "with open(" + repr(log_file) + ", 'a') as f:\n"
+                "    f.write(' '.join(args) + '\\n')\n"
+                "def val(flag):\n"
+                "    return args[args.index(flag) + 1] if flag in args else None\n"
+                "if args[:2] == ['ec2', 'describe-network-interfaces']:\n"
+                "    query = val('--query')\n"
+                "    eni_query = \"NetworkInterfaces[?Attachment.InstanceId=='i-nat-test' && Attachment.Status=='attached'].NetworkInterfaceId\"\n"
+                "    eip_filters = ['Name=attachment.instance-id,Values=i-nat-test', 'Name=attachment.device-index,Values=0']\n"
+                "    if val('--network-interface-ids') == 'eni-floating-1' and query == eni_query:\n"
+                "        if os.environ.get('MOCK_ENI_ATTACHED') == '1':\n"
+                "            print('eni-floating-1')\n"
+                "    elif '--filters' in args and args[args.index('--filters') + 1:args.index('--filters') + 3] == eip_filters \\\n"
+                "            and query == 'NetworkInterfaces[0].Association.AllocationId':\n"
+                "        print(os.environ.get('MOCK_EIP_ALLOC', 'None'))\n"
+                "sys.exit(0)\n",
+            )
 
             # mock curl (IMDSv2)
-            curl_mock = os.path.join(bin_dir, "curl")
-            with open(curl_mock, "w") as f:
-                f.write('#!/bin/sh\necho "mock-response"\nexit 0\n')
-            os.chmod(curl_mock, os.stat(curl_mock).st_mode | stat.S_IEXEC)
+            write_mock(
+                "curl",
+                '#!/bin/sh\n'
+                'case "$*" in\n'
+                '  *instance-id*) echo "i-nat-test" ;;\n'
+                '  *placement/region*) echo "ap-northeast-2" ;;\n'
+                '  *) echo "mock-token" ;;\n'
+                'esac\n'
+                'exit 0\n',
+            )
+            write_mock("systemctl", "#!/bin/sh\nexit 0\n")
+            # mock sysctl (IP 포워딩 활성)
+            write_mock("sysctl", "#!/bin/sh\necho 1\nexit 0\n")
 
-            # mock systemctl
-            systemctl_mock = os.path.join(bin_dir, "systemctl")
-            with open(systemctl_mock, "w") as f:
-                f.write('#!/bin/sh\nexit 0\n')
-            os.chmod(systemctl_mock, os.stat(systemctl_mock).st_mode | stat.S_IEXEC)
-
-            # mock ip (초기: eth1 미발견)
-            ip_mock = os.path.join(bin_dir, "ip")
-            with open(ip_mock, "w") as f:
-                f.write('#!/bin/sh\nexit 1\n')
-            os.chmod(ip_mock, os.stat(ip_mock).st_mode | stat.S_IEXEC)
-
-            env = os.environ.copy()
-            env["PATH"] = bin_dir + ":" + env["PATH"]
+            rule_missing = '#!/bin/sh\necho "-P POSTROUTING ACCEPT"\nexit 0\n'
+            rule_installed = (
+                '#!/bin/sh\n'
+                'echo "-A POSTROUTING -o ens5 -m comment --comment \\"NAT routing rule installed by fck-nat\\" -j MASQUERADE"\n'
+                'exit 0\n'
+            )
 
             # /etc/fck-nat.conf 쓰기를 임시 디렉터리로 리디렉션
             script_mod = script.replace("/etc/fck-nat.conf", os.path.join(tmpdir, "fck-nat.conf"))
 
-            # 시나리오 1: 실패/타임아웃 시 ABANDON 호출 및 exit code 1
-            proc_fail = subprocess.run(["sh", "-c", script_mod], env=env, capture_output=True, text=True)
-            self.assertEqual(proc_fail.returncode, 1, "User data script must exit 1 on failure")
-            with open(log_file, "r") as f:
-                fail_logs = f.read()
-            self.assertIn("--lifecycle-action-result ABANDON", fail_logs)
-            print("  Step 1: Subprocess execution timeout -> ABANDON called and exit code 1 verified.")
+            def run(iptables_body, eni_attached, eip_alloc):
+                write_mock("iptables", iptables_body)
+                open(log_file, "w").close()
+                env = os.environ.copy()
+                env["PATH"] = bin_dir + ":" + env["PATH"]
+                env["MOCK_ENI_ATTACHED"] = eni_attached
+                env["MOCK_EIP_ALLOC"] = eip_alloc
+                proc = subprocess.run(["sh", "-c", script_mod], env=env, capture_output=True, text=True)
+                with open(log_file, "r") as f:
+                    return proc.returncode, f.read()
 
-            # 시나리오 2: 성공 시 CONTINUE 호출 및 exit code 0
-            open(log_file, "w").close()
-            with open(ip_mock, "w") as f:
-                f.write('#!/bin/sh\nexit 0\n')
-            proc_success = subprocess.run(["sh", "-c", script_mod], env=env, capture_output=True, text=True)
-            self.assertEqual(proc_success.returncode, 0, "User data script must exit 0 on success")
-            with open(log_file, "r") as f:
-                success_logs = f.read()
-            self.assertIn("--lifecycle-action-result CONTINUE", success_logs)
-            print("  Step 2: Subprocess execution success -> CONTINUE called and exit code 0 verified.")
+            failure_cases = [
+                ("fck-nat NAT rule missing", rule_missing, "1", "eipalloc-static-1"),
+                ("floating ENI not attached", rule_installed, "0", "eipalloc-static-1"),
+                ("static EIP not associated", rule_installed, "1", "None"),
+                ("other EIP associated", rule_installed, "1", "eipalloc-other"),
+            ]
+            for name, iptables_body, eni_attached, eip_alloc in failure_cases:
+                returncode, logs = run(iptables_body, eni_attached, eip_alloc)
+                self.assertEqual(returncode, 1, f"User data script must exit 1 when {name}")
+                self.assertIn("--lifecycle-action-result ABANDON", logs, name)
+                self.assertNotIn("--lifecycle-action-result CONTINUE", logs, name)
+                print(f"  Step 1: {name} -> ABANDON called and exit code 1 verified.")
+
+            returncode, logs = run(rule_installed, "1", "eipalloc-static-1")
+            self.assertEqual(returncode, 0, "User data script must exit 0 on success")
+            self.assertIn("--lifecycle-action-result CONTINUE", logs)
+            self.assertIn("--instance-id i-nat-test", logs)
+            print("  Step 2: ENI attached, NAT rule installed, static EIP associated -> CONTINUE and exit code 0 verified.")
             print("✅ Test 12 (User Data Real Subprocess Execution for Failure & Success): PASSED")
 
     def test_lambda_iam_policy_and_role_permissions_and_access_denied_handling(self):
@@ -1214,7 +1214,7 @@ class TestNatFailoverLambda(unittest.TestCase):
         print("  Step 1: Terraform IAM Policy & Role Attachment verified in failover.tf.")
 
         # 런타임 시뮬레이션: AccessDenied 발생 시 안전 보류(Fail-closed) 검증
-        self.mock_ec2.describe_network_interfaces.side_effect = ClientError(
+        self.mock_floating_eni.side_effect = ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "User is not authorized to perform: ec2:DescribeNetworkInterfaces"}},
             "DescribeNetworkInterfaces"
         )
@@ -1224,8 +1224,8 @@ class TestNatFailoverLambda(unittest.TestCase):
         print("  Step 2: AccessDenied exception handled safely (Fail-closed DEFERRED).")
 
         # 런타임 시뮬레이션: 권한 부여 시 정상 통과 검증
-        self.mock_ec2.describe_network_interfaces.side_effect = None
-        self.mock_ec2.describe_network_interfaces.return_value = {
+        self.mock_floating_eni.side_effect = None
+        self.mock_floating_eni.return_value = {
             "NetworkInterfaces": [
                 {
                     "NetworkInterfaceId": "eni-nat11111",
@@ -1255,31 +1255,7 @@ class TestNatFailoverLambda(unittest.TestCase):
             4) fck-nat가 고정 EIP(AllocationId)를 연결하면 정상적으로 Ready 및 페일백/Reconcile되는지 검증
         """
         # Step 1: 임시 자동 할당 공인 IP만 존재 (AllocationId 없음)
-        self.mock_ec2.describe_instances.side_effect = None
-        self.mock_ec2.describe_instances.return_value = {
-            "Reservations": [
-                {
-                    "Instances": [
-                        {
-                            "InstanceId": "i-01111111",
-                            "State": {"Name": "running"},
-                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
-                            "PublicIpAddress": "54.180.1.1",  # 임시 공인 IP
-                            "NetworkInterfaces": [
-                                {
-                                    "Attachment": {"DeviceIndex": 0},
-                                    "NetworkInterfaceId": "eni-primary-1",
-                                    "Association": {
-                                        "PublicIp": "54.180.1.1",
-                                        # AllocationId 없음! (Auto-assigned IP)
-                                    },
-                                }
-                            ],
-                        }
-                    ]
-                }
-            ]
-        }
+        self.primary_eni_association["i-01111111"] = {"PublicIp": "54.180.1.1"}
 
         # 1) is_instance_eip_ready 검증
         eip_ready, eip_reason = failover.is_instance_eip_ready("i-01111111", expected_allocation_id="eipalloc-11111")
@@ -1309,31 +1285,7 @@ class TestNatFailoverLambda(unittest.TestCase):
         print("  Step 3: Alarm OK during temporary public IP -> FAILBACK_DEFERRED and route preserved.")
 
         # Step 4: fck-nat에 의해 고정 EIP(AllocationId="eipalloc-11111")가 정상 연결됨
-        self.mock_ec2.describe_instances.return_value = {
-            "Reservations": [
-                {
-                    "Instances": [
-                        {
-                            "InstanceId": "i-01111111",
-                            "State": {"Name": "running"},
-                            "Tags": [{"Key": "Name", "Value": "fundit-dev-nat-1"}],
-                            "PublicIpAddress": "3.35.1.1",  # 고정 EIP
-                            "NetworkInterfaces": [
-                                {
-                                    "Attachment": {"DeviceIndex": 0},
-                                    "NetworkInterfaceId": "eni-primary-1",
-                                    "Association": {
-                                        "PublicIp": "3.35.1.1",
-                                        "AllocationId": "eipalloc-11111",
-                                        "AssociationId": "eipassoc-11111",
-                                    },
-                                }
-                            ],
-                        }
-                    ]
-                }
-            ]
-        }
+        self.primary_eni_association["i-01111111"] = {"PublicIp": "3.35.1.1", "AllocationId": "eipalloc-11111"}
 
         eip_ready_ok, eip_reason_ok = failover.is_instance_eip_ready("i-01111111", expected_allocation_id="eipalloc-11111")
         self.assertTrue(eip_ready_ok)

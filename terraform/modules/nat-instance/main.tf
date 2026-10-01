@@ -147,7 +147,7 @@ resource "aws_launch_template" "nat" {
   }
 
   # fck-nat 공식 HA 아키텍처:
-  # 1) eni_id: 프라이빗 라우팅 타깃인 고정 보조 ENI를 eth1(수신용)로 attach
+  # 1) eni_id: 프라이빗 라우팅 타깃인 고정 보조 ENI를 수신용(device index 1)으로 attach
   # 2) eip_id: 실제 인터넷 송신 인터페이스인 Primary ENI(eth0)에 고정 EIP를 associate
   # 3) Lifecycle Hook 완료: 부트스트랩 완료 전 InService 전환 및 조기 페일백 방지
   user_data = base64encode(<<-EOF
@@ -166,34 +166,40 @@ resource "aws_launch_template" "nat" {
     INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
     REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 
-    # 4. Floating ENI(eth1) Attach, fck-nat 서비스 구동 및 고정 EIP(AllocationId) 바인딩 대기 (최대 60초)
+    # 4. Floating ENI Attach, fck-nat NAT 규칙 및 고정 EIP(AllocationId) 바인딩 대기 (2초 간격 30회)
     TARGET_EIP_ALLOC="${aws_eip.nat[count.index].id}"
     BOOTSTRAP_SUCCESS=false
     for i in $(seq 1 30); do
+      # AL2023에서는 보조 ENI 이름이 eth1이 아니라 ens6이라 AWS API로 부착 상태를 확인한다.
       ETH1_UP=false
-      if ip link show eth1 >/dev/null 2>&1 || ip link show | grep -q "${aws_network_interface.nat[count.index].id}"; then
+      ATTACHED_ENI=$(aws ec2 describe-network-interfaces \
+        --network-interface-ids "${aws_network_interface.nat[count.index].id}" \
+        --region "$REGION" \
+        --query "NetworkInterfaces[?Attachment.InstanceId=='$INSTANCE_ID' && Attachment.Status=='attached'].NetworkInterfaceId" \
+        --output text 2>/dev/null || true)
+      if [ "$ATTACHED_ENI" = "${aws_network_interface.nat[count.index].id}" ]; then
         ETH1_UP=true
       fi
 
+      # fck-nat는 oneshot 서비스라 끝나면 inactive가 되므로 설치한 NAT 규칙과 포워딩으로 확인한다.
       FCK_ACTIVE=false
-      if systemctl is-active fck-nat >/dev/null 2>&1 || service fck-nat status >/dev/null 2>&1; then
+      if [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" = "1" ] && iptables -t nat -S POSTROUTING 2>/dev/null | grep -q "installed by fck-nat"; then
         FCK_ACTIVE=true
       fi
 
-      # eth0에 fck-nat가 고정 EIP(${aws_eip.nat[count.index].id})를 바인딩했는지 AWS API로 직접 검증
-      # associate_public_ip_address로 할당된 임시 공인 IP와의 혼동을 방지하기 위해 AllocationId를 확인
+      # describe-instances의 Association에는 AllocationId가 없어 primary ENI를 ENI API로 조회한다.
       EIP_BOUND=false
-      CURRENT_ALLOC=$(aws ec2 describe-instances \
-        --instance-ids "$INSTANCE_ID" \
+      CURRENT_ALLOC=$(aws ec2 describe-network-interfaces \
+        --filters "Name=attachment.instance-id,Values=$INSTANCE_ID" "Name=attachment.device-index,Values=0" \
         --region "$REGION" \
-        --query "Reservations[0].Instances[0].NetworkInterfaces[?Attachment.DeviceIndex==\`0\`].Association.AllocationId" \
+        --query "NetworkInterfaces[0].Association.AllocationId" \
         --output text 2>/dev/null || true)
       if [ "$CURRENT_ALLOC" = "$TARGET_EIP_ALLOC" ]; then
         EIP_BOUND=true
       fi
 
       if [ "$ETH1_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ] && [ "$EIP_BOUND" = "true" ]; then
-        echo "Floating ENI attached, fck-nat service is active, and static EIP ($TARGET_EIP_ALLOC) is associated."
+        echo "Floating ENI attached, fck-nat NAT rule installed, and static EIP ($TARGET_EIP_ALLOC) is associated."
         BOOTSTRAP_SUCCESS=true
         break
       fi
@@ -211,7 +217,7 @@ resource "aws_launch_template" "nat" {
         --instance-id "$INSTANCE_ID" \
         --region "$REGION" || true
     else
-      echo "ERROR: Floating ENI attach, fck-nat readiness, or static EIP ($TARGET_EIP_ALLOC) binding timed out after 60s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
+      echo "ERROR: Floating ENI attach, fck-nat readiness, or static EIP ($TARGET_EIP_ALLOC) binding not ready after 30 checks. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
       aws autoscaling complete-lifecycle-action \
         --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
         --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
@@ -323,7 +329,7 @@ resource "aws_autoscaling_group" "nat" {
 
 # ----------------------------------------------------
 # 8. ASG Launch Lifecycle Hook (조기 페일백 및 블랙홀 방지)
-# 인스턴스 부팅 후 fck-nat 초기화, 고정 Floating ENI(eth1) Attach,
+# 인스턴스 부팅 후 fck-nat 초기화, 고정 Floating ENI Attach,
 # 고정 EIP 바인딩이 100% 완료되기 전까지 ASG가 InService로 전환되는 것을 보류합니다.
 # AWS 공식 권장: 부트스트랩 완료 전 트래픽 유입 및 InService 승격 방지
 # ----------------------------------------------------
