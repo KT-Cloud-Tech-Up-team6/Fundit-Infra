@@ -68,6 +68,8 @@ jobs:
               - 'terraform/modules/aws-load-balancer-controller/**'
             kafka:
               - 'terraform/envs/dev/12-kafka/**'
+            cloudwatch:
+              - 'terraform/envs/dev/13-cloudwatch/**'
             irsa_backend:
               - 'terraform/envs/dev/14-irsa-backend/**'
             external_secrets:
@@ -117,6 +119,7 @@ jobs:
             "monitoring:terraform/envs/dev/10-monitoring"
             "lbc:terraform/envs/dev/11-load-balancer-controller"
             "kafka:terraform/envs/dev/12-kafka"
+            "cloudwatch:terraform/envs/dev/13-cloudwatch"
             "irsa_backend:terraform/envs/dev/14-irsa-backend"
             "external_secrets:terraform/envs/dev/15-external-secrets"
           )
