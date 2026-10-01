@@ -27,3 +27,29 @@ output "live_s3_policy_arn" {
   description = "Live ServiceAccount에 연결된 S3 IAM 정책 ARN"
   value       = aws_iam_policy.live_s3.arn
 }
+
+output "live_recording_queue_url" {
+  description = "Live 서비스가 IVS 녹화 완료 이벤트를 수신할 SQS 큐 URL"
+  value       = aws_sqs_queue.live_recording.url
+}
+
+output "live_recording_queue_arn" {
+  description = "IVS 녹화 완료 이벤트 SQS 큐 ARN"
+  value       = aws_sqs_queue.live_recording.arn
+}
+
+output "live_recording_dlq_url" {
+  description = "IVS 녹화 완료 이벤트 Dead Letter Queue URL"
+  value       = aws_sqs_queue.live_recording_dlq.url
+}
+
+output "live_recording_event_rule_arn" {
+  description = "IVS 녹화 완료 EventBridge 규칙 ARN"
+  value       = aws_cloudwatch_event_rule.live_recording.arn
+}
+
+output "live_recording_dlq_alarm_arn" {
+  description = "IVS 녹화 완료 DLQ 메시지 적재 감지 CloudWatch Metric Alarm ARN"
+  value       = aws_cloudwatch_metric_alarm.live_recording_dlq.arn
+}
+
