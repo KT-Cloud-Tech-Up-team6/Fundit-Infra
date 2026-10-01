@@ -171,9 +171,8 @@ resource "aws_cloudwatch_metric_alarm" "live_recording_dlq" {
   alarm_description   = "IVS 녹화 완료 메시지 처리 실패: live-recording-dlq에 메시지가 인입되었습니다. (메시지 유실 및 VOD 변환 오류 점검 필요)"
   treat_missing_data  = "notBreaching"
 
-  # TODO: 13-cloudwatch 레이어의 공통 infra_alerts SNS 토픽이 완전히 Apply된 이후,
-  # 아래 주석을 해제하여 Slack/Email 알림이 정상 발송되도록(침묵의 알람 방지) 연동 필수.
-  # alarm_actions       = [data.terraform_remote_state.cloudwatch.outputs.infra_alerts_sns_topic_arn]
+  # 13-cloudwatch 배포 완료에 따라 Slack 알림 발송용 공통 SNS 토픽 연동
+  alarm_actions = [data.aws_sns_topic.infra_alerts.arn]
 
   dimensions = {
     QueueName = aws_sqs_queue.live_recording_dlq.name
