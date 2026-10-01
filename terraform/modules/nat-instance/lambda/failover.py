@@ -214,14 +214,14 @@ def is_instance_eip_ready(instance_id, expected_allocation_id=None):
     if not instance_id:
         return False, "No instance ID"
     try:
-        resp = ec2_client.describe_instances(InstanceIds=[instance_id])
-        reservations = resp.get("Reservations", [])
-        if not reservations or not reservations[0].get("Instances"):
-            return False, f"Instance {instance_id} not found"
-
-        inst = reservations[0]["Instances"][0]
-        # eth0 NetworkInterface의 Association에서 AllocationId 확인
-        for iface in inst.get("NetworkInterfaces", []):
+        # describe_instances의 Association에는 AllocationId가 없어 ENI API로 조회한다.
+        resp = ec2_client.describe_network_interfaces(
+            Filters=[
+                {"Name": "attachment.instance-id", "Values": [instance_id]},
+                {"Name": "attachment.device-index", "Values": ["0"]},
+            ]
+        )
+        for iface in resp.get("NetworkInterfaces", []):
             if iface.get("Attachment", {}).get("DeviceIndex") == 0:
                 assoc = iface.get("Association", {})
                 alloc_id = assoc.get("AllocationId")
