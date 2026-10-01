@@ -11,6 +11,33 @@ resource "helm_release" "fluent_bit" {
   values = [
     yamlencode({
       config = {
+        # 이슈 #132: kube-system 등 쿠버네티스 시스템 네임스페이스 로그와
+        # Spring Boot 헬스체크(/actuator/health) 로그를 필터링하여 불필요한 디스크 적재 방지.
+        #
+        # 중요: config.filters를 지정하면 차트 기본 kubernetes 필터가 대체(Overwrite)되므로,
+        # k8s 메타데이터 파싱 및 라벨 주입을 위한 [FILTER] Name kubernetes를 반드시 선언하고
+        # 그 뒤에 제외(grep Exclude) 필터를 연결합니다.
+        # 또한 kafka, argocd, cnpg-system 등 플랫폼 서비스 로그 유실을 방지하기 위해
+        # 화이트리스트가 아닌 시스템 네임스페이스 제외(Exclude) 방식을 적용합니다.
+        filters = <<-EOT
+          [FILTER]
+              Name kubernetes
+              Match kube.*
+              Merge_Log On
+              Keep_Log Off
+              K8S-Logging.Parser On
+              K8S-Logging.Exclude On
+
+          [FILTER]
+              Name    grep
+              Match   kube.*
+              Exclude $kubernetes['namespace_name'] ^(kube-system|kube-public|kube-node-lease)$
+
+          [FILTER]
+              Name    grep
+              Match   kube.*
+              Exclude $log /actuator/health
+        EOT
         outputs = <<-EOT
           [OUTPUT]
               Name loki
