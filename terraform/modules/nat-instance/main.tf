@@ -166,38 +166,48 @@ resource "aws_launch_template" "nat" {
     INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
     REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 
-    # 4. Floating ENI(eth1) Attach, fck-nat 서비스 구동 및 고정 EIP(AllocationId) 바인딩 대기 (최대 60초)
+    # 4. Floating ENI Attach, fck-nat 서비스 구동 및 고정 EIP(AllocationId) 바인딩 대기 (최대 180초)
+    TARGET_ENI_ID="${aws_network_interface.nat[count.index].id}"
     TARGET_EIP_ALLOC="${aws_eip.nat[count.index].id}"
     BOOTSTRAP_SUCCESS=false
-    for i in $(seq 1 30); do
-      ETH1_UP=false
-      if ip link show eth1 >/dev/null 2>&1 || ip link show | grep -q "${aws_network_interface.nat[count.index].id}"; then
-        ETH1_UP=true
+    for i in $(seq 1 60); do
+      # AL2023 udev 환경에서 인터페이스명이 eth1 대신 ens6, ens7 등으로 명명되므로,
+      # lo를 제외한 네트워크 인터페이스가 2개 이상 활성화되었는지 동적 검사
+      ENI_UP=false
+      IFACE_COUNT=$(ip -br link | awk '$1 != "lo" {print $1}' | wc -l)
+      if [ "$IFACE_COUNT" -ge 2 ]; then
+        ENI_UP=true
       fi
 
+      # fck-nat 서비스는 oneshot 실행 후 종료되므로 ip_forward 활성화 상태 및 systemctl 상태로 검증
       FCK_ACTIVE=false
-      if systemctl is-active fck-nat >/dev/null 2>&1 || service fck-nat status >/dev/null 2>&1; then
+      IP_FWD=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || true)
+      if [ "$IP_FWD" = "1" ] || systemctl is-active fck-nat >/dev/null 2>&1; then
         FCK_ACTIVE=true
       fi
 
       # eth0에 fck-nat가 고정 EIP(${aws_eip.nat[count.index].id})를 바인딩했는지 AWS API로 직접 검증
-      # associate_public_ip_address로 할당된 임시 공인 IP와의 혼동을 방지하기 위해 AllocationId를 확인
+      # ec2 describe-instances는 Association.AllocationId를 반환하지 않으므로 describe-network-interfaces로 정확히 조회
+      PRIMARY_MAC=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/mac)
+      PRIMARY_ENI_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/network/interfaces/macs/$PRIMARY_MAC/interface-id" 2>/dev/null || true)
       EIP_BOUND=false
-      CURRENT_ALLOC=$(aws ec2 describe-instances \
-        --instance-ids "$INSTANCE_ID" \
-        --region "$REGION" \
-        --query "Reservations[0].Instances[0].NetworkInterfaces[?Attachment.DeviceIndex==\`0\`].Association.AllocationId" \
-        --output text 2>/dev/null || true)
-      if [ "$CURRENT_ALLOC" = "$TARGET_EIP_ALLOC" ]; then
-        EIP_BOUND=true
+      if [ -n "$PRIMARY_ENI_ID" ]; then
+        CURRENT_ALLOC=$(aws ec2 describe-network-interfaces \
+          --network-interface-ids "$PRIMARY_ENI_ID" \
+          --region "$REGION" \
+          --query "NetworkInterfaces[0].Association.AllocationId" \
+          --output text 2>/dev/null || true)
+        if [ "$CURRENT_ALLOC" = "$TARGET_EIP_ALLOC" ]; then
+          EIP_BOUND=true
+        fi
       fi
 
-      if [ "$ETH1_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ] && [ "$EIP_BOUND" = "true" ]; then
-        echo "Floating ENI attached, fck-nat service is active, and static EIP ($TARGET_EIP_ALLOC) is associated."
+      if [ "$ENI_UP" = "true" ] && [ "$FCK_ACTIVE" = "true" ] && [ "$EIP_BOUND" = "true" ]; then
+        echo "Floating ENI attached, fck-nat active (ip_forward=1), and static EIP ($TARGET_EIP_ALLOC) associated."
         BOOTSTRAP_SUCCESS=true
         break
       fi
-      sleep 2
+      sleep 3
     done
 
     # 5. ASG Lifecycle Action 전송 (검증 성공 시 CONTINUE, 실패/타임아웃 시 ABANDON)
@@ -211,7 +221,7 @@ resource "aws_launch_template" "nat" {
         --instance-id "$INSTANCE_ID" \
         --region "$REGION" || true
     else
-      echo "ERROR: Floating ENI attach, fck-nat readiness, or static EIP ($TARGET_EIP_ALLOC) binding timed out after 60s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
+      echo "ERROR: Floating ENI attach, fck-nat readiness, or static EIP ($TARGET_EIP_ALLOC) binding timed out after 180s. Aborting lifecycle action with ABANDON to prevent premature failback blackhole."
       aws autoscaling complete-lifecycle-action \
         --lifecycle-hook-name "${var.project_name}-${var.environment}-nat-${count.index + 1}-launch-hook" \
         --auto-scaling-group-name "${var.project_name}-${var.environment}-nat-asg-${count.index + 1}" \
@@ -234,8 +244,10 @@ resource "aws_launch_template" "nat" {
     tags = merge(
       var.tags,
       {
-        Name      = "${var.project_name}-${var.environment}-nat-${count.index + 1}"
-        AutoSleep = "true"
+        Name            = "${var.project_name}-${var.environment}-nat-${count.index + 1}"
+        AutoSleep       = "true"
+        "fck-nat:eni_id" = aws_network_interface.nat[count.index].id
+        "fck-nat:eip_id" = aws_eip.nat[count.index].id
       }
     )
   }

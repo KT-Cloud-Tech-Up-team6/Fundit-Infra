@@ -210,6 +210,8 @@ def is_instance_eip_ready(instance_id, expected_allocation_id=None):
     인스턴스의 Primary ENI(eth0)에 Elastic IP(고정 EIP)가 정상 연결되어 있는지 검증합니다.
     Launch Template의 associate_public_ip_address=true로 인해 자동 할당된 임시 공인 IP는
     AllocationId가 없으므로 이를 배제하고, fck-nat가 고정 EIP를 associate 완료했는지 판정합니다.
+    주의: EC2 describe_instances API 응답에는 eth0 Association 내에 AllocationId가 누락되므로,
+    반드시 describe_network_interfaces API를 통해 AllocationId를 정확하게 교차 검증합니다.
     """
     if not instance_id:
         return False, "No instance ID"
@@ -223,7 +225,16 @@ def is_instance_eip_ready(instance_id, expected_allocation_id=None):
         # eth0 NetworkInterface의 Association에서 AllocationId 확인
         for iface in inst.get("NetworkInterfaces", []):
             if iface.get("Attachment", {}).get("DeviceIndex") == 0:
-                assoc = iface.get("Association", {})
+                eth0_eni_id = iface.get("NetworkInterfaceId")
+                if not eth0_eni_id:
+                    return False, f"Instance {instance_id} eth0 NetworkInterfaceId not found"
+
+                eni_resp = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eth0_eni_id])
+                enis = eni_resp.get("NetworkInterfaces", [])
+                if not enis:
+                    return False, f"Network interface {eth0_eni_id} not found"
+
+                assoc = enis[0].get("Association", {})
                 alloc_id = assoc.get("AllocationId")
                 public_ip = assoc.get("PublicIp")
 
