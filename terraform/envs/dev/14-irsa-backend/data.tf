@@ -24,3 +24,7 @@ data "terraform_remote_state" "storage" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+# 13-cloudwatch의 공통 인프라 알람 SNS 토픽 (Slack 연동)
+data "aws_sns_topic" "infra_alerts" {
+  name = "fundit-${var.environment}-infra-alerts"
+}
