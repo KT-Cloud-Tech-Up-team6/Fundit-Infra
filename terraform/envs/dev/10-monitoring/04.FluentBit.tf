@@ -11,22 +11,14 @@ resource "helm_release" "fluent_bit" {
   values = [
     yamlencode({
       config = {
-        # 이슈 #(번호): kube-system/karpenter 등 불필요한 네임스페이스 로그와
-        # Spring Boot 헬스체크(/actuator/health) 로그까지 전부 Loki로 쌓이고
-        # 있어 디스크 낭비. 두 필터로 워크로드 네임스페이스만, 헬스체크는
-        # 제외하고 남긴다.
+        # 이슈 #132: kube-system 등 쿠버네티스 시스템 네임스페이스 로그와
+        # Spring Boot 헬스체크(/actuator/health) 로그를 필터링하여 불필요한 디스크 적재 방지.
         #
-        # 주의(PR #146 리뷰 반영): config.filters를 지정하면 차트 기본
-        # 필터가 "추가"가 아니라 "대체"된다. 원래 있던 Name kubernetes
-        # 필터(kubernetes.namespace_name 등 메타데이터를 붙여주는 역할)를
-        # 빼먹으면 아래 grep이 참조하는 필드 자체가 없어서 kube.* 로그가
-        # 전부 걸러진다. 그래서 원본 kubernetes 필터를 그대로 유지하고
-        # 그 뒤에 grep 필터를 덧붙인다(실제 클러스터의 현재 ConfigMap에서
-        # 원본 내용 확인 완료).
-        #
-        # host.*(systemd, kubelet.service 로그)는 이번 필터 대상에 포함하지
-        # 않음 — 애초 목적(워크로드 네임스페이스 노이즈·헬스체크 스팸 감소)
-        # 밖의 범위이고, 이미 kubelet 하나로 좁게 받고 있어 양도 적음.
+        # 중요: config.filters를 지정하면 차트 기본 kubernetes 필터가 대체(Overwrite)되므로,
+        # k8s 메타데이터 파싱 및 라벨 주입을 위한 [FILTER] Name kubernetes를 반드시 선언하고
+        # 그 뒤에 제외(grep Exclude) 필터를 연결합니다.
+        # 또한 kafka, argocd, cnpg-system 등 플랫폼 서비스 로그 유실을 방지하기 위해
+        # 화이트리스트가 아닌 시스템 네임스페이스 제외(Exclude) 방식을 적용합니다.
         filters = <<-EOT
           [FILTER]
               Name kubernetes
@@ -37,9 +29,9 @@ resource "helm_release" "fluent_bit" {
               K8S-Logging.Exclude On
 
           [FILTER]
-              Name  grep
-              Match kube.*
-              Regex $kubernetes['namespace_name'] ^(dev|monitoring)$
+              Name    grep
+              Match   kube.*
+              Exclude $kubernetes['namespace_name'] ^(kube-system|kube-public|kube-node-lease)$
 
           [FILTER]
               Name    grep
