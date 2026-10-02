@@ -30,8 +30,9 @@ resource "aws_iam_role" "ai_s3" {
   tags               = var.common_tags
 }
 
-# IVS 자동 녹화 영상(VOD) S3 버킷 읽기 정책 (ListBucket / GetObject)
+# IVS 자동 녹화 영상(VOD) S3 버킷 읽기 및 쇼츠(Shorts) 미디어 버킷 쓰기 정책
 data "aws_iam_policy_document" "ai_s3" {
+  # 1. VOD 읽기
   statement {
     effect  = "Allow"
     actions = ["s3:ListBucket"]
@@ -47,11 +48,28 @@ data "aws_iam_policy_document" "ai_s3" {
       "${data.terraform_remote_state.storage.outputs.video_bucket_arn}/*",
     ]
   }
+
+  # 2. 쇼츠 영상 업로드 (CloudFront /media/* 캐싱 오리진)
+  statement {
+    effect  = "Allow"
+    actions = ["s3:ListBucket"]
+    resources = [
+      data.terraform_remote_state.storage.outputs.media_bucket_arn,
+    ]
+  }
+
+  statement {
+    effect  = "Allow"
+    actions = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+    resources = [
+      "${data.terraform_remote_state.storage.outputs.media_bucket_arn}/*",
+    ]
+  }
 }
 
 resource "aws_iam_policy" "ai_s3" {
   name        = "fundit-dev-ai-s3-policy"
-  description = "AI 하이라이트 생성 파이프라인의 VOD S3 버킷 읽기 전용 IAM 정책"
+  description = "AI 하이라이트 파이프라인의 VOD S3 버킷 읽기 및 쇼츠 미디어 S3 버킷 쓰기 IAM 정책"
   policy      = data.aws_iam_policy_document.ai_s3.json
   tags        = var.common_tags
 }
