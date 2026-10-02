@@ -30,8 +30,9 @@ resource "aws_iam_role" "ai_s3" {
   tags               = var.common_tags
 }
 
-# IVS 자동 녹화 영상(VOD) S3 버킷 읽기 정책 (ListBucket / GetObject)
+# IVS 자동 녹화 영상(VOD) S3 버킷 읽기 및 쇼츠(Shorts) 미디어 버킷 전용 업로드 정책
 data "aws_iam_policy_document" "ai_s3" {
+  # 1. VOD 읽기
   statement {
     effect  = "Allow"
     actions = ["s3:ListBucket"]
@@ -45,6 +46,15 @@ data "aws_iam_policy_document" "ai_s3" {
     actions = ["s3:GetObject"]
     resources = [
       "${data.terraform_remote_state.storage.outputs.video_bucket_arn}/*",
+    ]
+  }
+
+  # 2. 쇼츠 영상 전용 업로드 (media/shorts/* 한정 PutObject)
+  statement {
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${data.terraform_remote_state.storage.outputs.media_bucket_arn}/media/shorts/*",
     ]
   }
 }
