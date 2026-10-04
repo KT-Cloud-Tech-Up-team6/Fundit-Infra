@@ -25,9 +25,9 @@ resource "helm_release" "loki" {
 
         # 이슈 #132: 로그 자동 삭제 정책. compactor가 없으면 20Gi gp3 PVC가
         # 시간이 지날수록 계속 차오르기만 해서 언젠가 Full이 난다.
-        # retention_period는 "168h"(7일) 기준, 14일로 늘리려면 "336h"로 변경.
+        # retention_period는 "360h"(15일) 기준.
         limits_config = {
-          retention_period = "168h"
+          retention_period = "360h"
         }
         compactor = {
           retention_enabled = true
