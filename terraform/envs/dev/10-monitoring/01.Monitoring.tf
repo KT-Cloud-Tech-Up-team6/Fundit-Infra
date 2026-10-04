@@ -57,6 +57,19 @@ resource "helm_release" "kube_prometheus_stack" {
         enabled = false
       }
       grafana = {
+        # Grafana의 사용자/조직 정보는 SQLite에 저장된다. emptyDir 대신 PVC를 써서
+        # Pod 재생성 후에도 조회 전용 계정과 설정이 유지되도록 한다(이슈 #157).
+        # 단일 ReadWriteOnce 볼륨의 동시 마운트를 피하기 위해 기존 Pod를 먼저 내린다.
+        deploymentStrategy = {
+          type = "Recreate"
+        }
+        persistence = {
+          type             = "pvc"
+          enabled          = true
+          storageClassName = "gp3"
+          accessModes      = ["ReadWriteOnce"]
+          size             = "1Gi"
+        }
         additionalDataSources = [
           {
             name   = "Loki"
