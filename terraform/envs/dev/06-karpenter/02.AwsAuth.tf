@@ -46,6 +46,8 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
       { userarn = "arn:aws:iam::899957568205:user/infra_hjy", username = "infra_hjy", groups = ["system:masters"] },
       { userarn = "arn:aws:iam::899957568205:user/infra_jyb", username = "infra_jyb", groups = ["system:masters"] },
       { userarn = "arn:aws:iam::899957568205:user/infra_lms", username = "infra_lms", groups = ["system:masters"] },
+      { userarn = "arn:aws:iam::899957568205:user/fundit-grafana-kim-jaeseong", username = "fundit-grafana-kim-jaeseong", groups = ["fundit-backend-grafana-readers"] },
+      { userarn = "arn:aws:iam::899957568205:user/fundit-grafana-kang-sangwook", username = "fundit-grafana-kang-sangwook", groups = ["fundit-backend-grafana-readers"] },
     ])
   }
 }
